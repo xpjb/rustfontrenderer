@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["text", "demo"]
+
+[workspace.dependencies]
+wgpu = "0.20"
+ttf-parser = "0.25"
+rustybuzz = "0.20.1"
+bytemuck = { version = "1.16", features = ["derive"] }
+glam = "0.29"
+winit = "0.29"
+pollster = "0.3"
