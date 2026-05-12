@@ -5,19 +5,20 @@
 //! cache locations so the pixel shader can fetch curve and band data.
 
 use bytemuck::{Pod, Zeroable};
+
 use crate::cache::GlyphInfo;
 use crate::layout::ShapedRun;
 
-/// 5 × vec4 = 80 bytes per vertex. Layout matches the WGSL shader.
+/// 56 bytes per vertex. Layout matches the WGSL shader.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct TextVertex {
-    /// pos.xy = em-space corner; pos.zw = corner normal (unused unless dilation enabled).
-    pub pos: [f32; 4],
-    /// tex.xy = em-space sample coord; tex.zw = packed glyph metadata (locations + band_max).
-    pub tex: [f32; 4],
-    /// jac.xy = glyph origin (px, py) used to derive glyph-local sample coord.
-    pub jac: [f32; 4],
+    /// em-space corner.
+    pub pos: [f32; 2],
+    /// Packed glyph metadata: band start and band max.
+    pub glyph: [u32; 2],
+    /// Glyph origin in em-space, used to derive glyph-local sample coord.
+    pub jac: [f32; 2],
     /// bnd = (band_scale_x, band_scale_y, band_offset_x, band_offset_y).
     pub bnd: [f32; 4],
     /// col = RGBA.
@@ -38,26 +39,28 @@ fn glyph_quad(info: &GlyphInfo, px: f32, py: f32, color: [f32; 4]) -> [TextVerte
 
     let gx = info.band_start.0 as u32;
     let gy = info.band_start.1 as u32;
-    let tex_z = f32::from_bits((gy << 16) | gx);
-    let tex_w = f32::from_bits(((info.band_max.1 & 0xFF) << 16) | (info.band_max.0 & 0xFF));
+    let glyph = [
+        (gy << 16) | gx,
+        ((info.band_max.1 & 0xFF) << 16) | (info.band_max.0 & 0xFF),
+    ];
 
-    let jac = [px, py, 0.0, 0.0];
+    let jac = [px, py];
     let bnd = [scale_x, scale_y, off_x, off_y];
 
     let corners = [
-        (bx, by, -1.0, -1.0),
-        (bx + bw, by, 1.0, -1.0),
-        (bx + bw, by + bh, 1.0, 1.0),
-        (bx, by, -1.0, -1.0),
-        (bx + bw, by + bh, 1.0, 1.0),
-        (bx, by + bh, -1.0, 1.0),
+        (bx, by),
+        (bx + bw, by),
+        (bx + bw, by + bh),
+        (bx, by),
+        (bx + bw, by + bh),
+        (bx, by + bh),
     ];
 
-    let mut out = [TextVertex { pos: [0.0; 4], tex: [0.0; 4], jac, bnd, col: color }; 6];
-    for (i, (cx, cy, nx, ny)) in corners.iter().enumerate() {
+    let mut out = [TextVertex { pos: [0.0; 2], glyph, jac, bnd, col: color }; 6];
+    for (i, (cx, cy)) in corners.iter().enumerate() {
         out[i] = TextVertex {
-            pos: [*cx, *cy, *nx, *ny],
-            tex: [*cx, *cy, tex_z, tex_w],
+            pos: [*cx, *cy],
+            glyph,
             jac,
             bnd,
             col: color,

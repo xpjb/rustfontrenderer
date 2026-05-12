@@ -10,7 +10,6 @@ use crate::vertex::TextVertex;
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Params {
     matrix: [[f32; 4]; 4],
-    viewport: [f32; 4],
 }
 
 /// One uploaded glyph atlas (curve + band textures) bound as group 1.
@@ -34,11 +33,17 @@ impl TextAtlas {
 
         let mut curve_padded = vec![[0.0f32; 4]; (cw * ch) as usize];
         for (i, t) in cache.curve_data().iter().enumerate() {
-            if i < curve_padded.len() { curve_padded[i] = *t; }
+            if i < curve_padded.len() {
+                curve_padded[i] = *t;
+            }
         }
         let curve_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("text curve texture"),
-            size: wgpu::Extent3d { width: cw, height: ch, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: cw,
+                height: ch,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -48,21 +53,37 @@ impl TextAtlas {
         });
         queue.write_texture(
             wgpu::ImageCopyTexture {
-                texture: &curve_tex, mip_level: 0,
-                origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All,
+                texture: &curve_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
             },
             bytemuck::cast_slice(&curve_padded),
-            wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(cw * 16), rows_per_image: Some(ch) },
-            wgpu::Extent3d { width: cw, height: ch, depth_or_array_layers: 1 },
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(cw * 16),
+                rows_per_image: Some(ch),
+            },
+            wgpu::Extent3d {
+                width: cw,
+                height: ch,
+                depth_or_array_layers: 1,
+            },
         );
 
         let mut band_padded = vec![[0u32; 4]; (bw * bh) as usize];
         for (i, t) in cache.band_data().iter().enumerate() {
-            if i < band_padded.len() { band_padded[i] = *t; }
+            if i < band_padded.len() {
+                band_padded[i] = *t;
+            }
         }
         let band_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("text band texture"),
-            size: wgpu::Extent3d { width: bw, height: bh, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: bw,
+                height: bh,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -72,12 +93,22 @@ impl TextAtlas {
         });
         queue.write_texture(
             wgpu::ImageCopyTexture {
-                texture: &band_tex, mip_level: 0,
-                origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All,
+                texture: &band_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
             },
             bytemuck::cast_slice(&band_padded),
-            wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(bw * 16), rows_per_image: Some(bh) },
-            wgpu::Extent3d { width: bw, height: bh, depth_or_array_layers: 1 },
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(bw * 16),
+                rows_per_image: Some(bh),
+            },
+            wgpu::Extent3d {
+                width: bw,
+                height: bh,
+                depth_or_array_layers: 1,
+            },
         );
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -85,17 +116,25 @@ impl TextAtlas {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&curve_tex.create_view(&Default::default())),
+                    resource: wgpu::BindingResource::TextureView(
+                        &curve_tex.create_view(&Default::default()),
+                    ),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&band_tex.create_view(&Default::default())),
+                    resource: wgpu::BindingResource::TextureView(
+                        &band_tex.create_view(&Default::default()),
+                    ),
                 },
             ],
             label: Some("text atlas bind group"),
         });
 
-        Self { curve_tex, band_tex, bind_group }
+        Self {
+            curve_tex,
+            band_tex,
+            bind_group,
+        }
     }
 }
 
@@ -152,13 +191,15 @@ impl TextRenderer {
             label: Some("text uniform buffer"),
             contents: bytemuck::bytes_of(&Params {
                 matrix: Mat4::IDENTITY.to_cols_array_2d(),
-                viewport: [config.width as f32, config.height as f32, 0.0, 0.0],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &uniform_layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: uniform_buffer.as_entire_binding() }],
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
             label: Some("text uniform bind group"),
         });
 
@@ -178,17 +219,38 @@ impl TextRenderer {
         });
 
         let attrs = [
-            wgpu::VertexAttribute { offset: 0,  shader_location: 0, format: wgpu::VertexFormat::Float32x4 },
-            wgpu::VertexAttribute { offset: 16, shader_location: 1, format: wgpu::VertexFormat::Float32x4 },
-            wgpu::VertexAttribute { offset: 32, shader_location: 2, format: wgpu::VertexFormat::Float32x4 },
-            wgpu::VertexAttribute { offset: 48, shader_location: 3, format: wgpu::VertexFormat::Float32x4 },
-            wgpu::VertexAttribute { offset: 64, shader_location: 4, format: wgpu::VertexFormat::Float32x4 },
+            wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: wgpu::VertexFormat::Float32x2,
+            },
+            wgpu::VertexAttribute {
+                offset: 8,
+                shader_location: 1,
+                format: wgpu::VertexFormat::Uint32x2,
+            },
+            wgpu::VertexAttribute {
+                offset: 16,
+                shader_location: 2,
+                format: wgpu::VertexFormat::Float32x2,
+            },
+            wgpu::VertexAttribute {
+                offset: 24,
+                shader_location: 3,
+                format: wgpu::VertexFormat::Float32x4,
+            },
+            wgpu::VertexAttribute {
+                offset: 40,
+                shader_location: 4,
+                format: wgpu::VertexFormat::Float32x4,
+            },
         ];
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("text pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &vert, entry_point: "main",
+                module: &vert,
+                entry_point: "main",
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<TextVertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
@@ -197,7 +259,8 @@ impl TextRenderer {
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: &frag, entry_point: "main",
+                module: &frag,
+                entry_point: "main",
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
@@ -241,12 +304,11 @@ impl TextRenderer {
         vertex_buffer: &wgpu::Buffer,
         vertex_count: u32,
         matrix: Mat4,
-        viewport: (u32, u32),
+        _viewport: (u32, u32),
         clear: Option<wgpu::Color>,
     ) {
         let params = Params {
             matrix: matrix.to_cols_array_2d(),
-            viewport: [viewport.0 as f32, viewport.1 as f32, 0.0, 0.0],
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&params));
 
@@ -257,8 +319,12 @@ impl TextRenderer {
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("text render pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view, resolve_target: None,
-                ops: wgpu::Operations { load: load_op, store: wgpu::StoreOp::Store },
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: load_op,
+                    store: wgpu::StoreOp::Store,
+                },
             })],
             depth_stencil_attachment: None,
             timestamp_writes: None,

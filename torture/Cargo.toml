@@ -1,0 +1,16 @@
+[package]
+name = "torture"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "torture"
+path = "src/main.rs"
+
+[dependencies]
+text = { path = "../text" }
+wgpu = { workspace = true }
+winit = { workspace = true }
+pollster = { workspace = true }
+glam = { workspace = true }
+bytemuck = { workspace = true }

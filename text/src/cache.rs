@@ -1,7 +1,8 @@
 //! Glyph cache: combines per-glyph band data into shared GPU textures.
 
-use crate::bands::{BandData, BAND_TEXTURE_WIDTH};
 use std::collections::HashMap;
+
+use crate::bands::{BandData, BAND_TEXTURE_WIDTH};
 
 #[derive(Clone, Copy, Debug)]
 pub struct GlyphInfo {
@@ -81,8 +82,9 @@ impl GlyphCache {
         for (i, t) in texels.iter().enumerate() {
             let mut tc = *t;
             if i >= header_count {
-                tc[0] = t[0].saturating_add(curve_start.0);
-                tc[1] = t[1].saturating_add(curve_start.1);
+                let (x, y) = offset_curve_coord(curve_start, (t[0], t[1]));
+                tc[0] = x;
+                tc[1] = y;
             }
             self.band_texels.push(tc);
         }
@@ -96,6 +98,17 @@ impl GlyphCache {
     pub fn band_data(&self) -> &[[u32; 4]] { &self.band_texels }
     pub fn curve_size(&self) -> (u32, u32) { (self.curve_width, self.curve_height.max(1)) }
     pub fn band_size(&self) -> (u32, u32) { (self.band_width, self.band_height.max(1)) }
+}
+
+fn offset_curve_coord(start: (u32, u32), local: (u32, u32)) -> (u32, u32) {
+    let absolute = start.1 as usize * BAND_TEXTURE_WIDTH as usize
+        + start.0 as usize
+        + local.1 as usize * BAND_TEXTURE_WIDTH as usize
+        + local.0 as usize;
+    (
+        (absolute % BAND_TEXTURE_WIDTH as usize) as u32,
+        (absolute / BAND_TEXTURE_WIDTH as usize) as u32,
+    )
 }
 
 impl Default for GlyphCache {

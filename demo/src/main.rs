@@ -26,7 +26,7 @@ const SAMPLE: &str = "The quick brown fox jumps over the lazy dog. \
 Slug renders glyphs directly from quadratic Bezier curves on the GPU, \
 using horizontal and vertical bands to make per-pixel coverage cheap. \
 This paragraph is wrapped to a fixed pixel width by a naive whitespace \
-line breaker — no kerning across the break, no Unicode rules, just words.";
+line breaker â€” no kerning across the break, no Unicode rules, just words.";
 
 fn main() {
     block_on(run());
@@ -45,8 +45,6 @@ async fn run() {
     let metrics = font.metrics();
     let line_height_em = metrics.line_height() * LINE_SPACING;
 
-    // Negative model y-scale flips screen y, so each successive line sits at a
-    // more-negative em y.
     let mut runs = Vec::new();
     let mut y_em = 0.0;
     for line in &lines {
