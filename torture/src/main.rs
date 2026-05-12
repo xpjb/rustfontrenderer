@@ -131,7 +131,7 @@ async fn run() {
     surface.configure(&device, &config);
 
     let renderer = TextRenderer::new(&device, &config);
-    let atlas = TextAtlas::new(&device, &queue, &renderer.atlas_layout, &cache);
+    let mut atlas = TextAtlas::new(&device, &queue, &renderer.atlas_layout, &cache);
     let mut vbuf = DynamicVertexBuffer::new(&device, 4096);
 
     let mut flyer_count = INITIAL_FLYER_COUNT;
@@ -260,6 +260,9 @@ async fn run() {
                                 );
                             });
                         }
+                        timed_scope_ms!("atlas_sync", frame_scopes, {
+                            atlas.sync(&device, &queue, &renderer.atlas_layout, &cache);
+                        });
                         timed_scope_ms!("overlay_append", frame_scopes, {
                             overlay.append_vertices(&mut vertices);
                         });

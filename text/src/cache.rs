@@ -20,6 +20,7 @@ pub struct GlyphCache {
     band_width: u32,
     band_height: u32,
     glyphs: HashMap<u32, GlyphInfo>,
+    revision: u64,
 }
 
 impl GlyphCache {
@@ -32,6 +33,7 @@ impl GlyphCache {
             band_width: BAND_TEXTURE_WIDTH,
             band_height: 0,
             glyphs: HashMap::new(),
+            revision: 0,
         }
     }
 
@@ -56,6 +58,7 @@ impl GlyphCache {
             bbox: band_data.bbox,
         };
         self.glyphs.insert(glyph_id, info);
+        self.revision = self.revision.wrapping_add(1);
         info
     }
 
@@ -98,6 +101,7 @@ impl GlyphCache {
     pub fn band_data(&self) -> &[[u32; 4]] { &self.band_texels }
     pub fn curve_size(&self) -> (u32, u32) { (self.curve_width, self.curve_height.max(1)) }
     pub fn band_size(&self) -> (u32, u32) { (self.band_width, self.band_height.max(1)) }
+    pub fn revision(&self) -> u64 { self.revision }
 }
 
 fn offset_curve_coord(start: (u32, u32), local: (u32, u32)) -> (u32, u32) {
