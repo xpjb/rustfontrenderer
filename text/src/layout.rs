@@ -5,7 +5,7 @@
 use rustybuzz::{shape, UnicodeBuffer};
 use ttf_parser::GlyphId;
 
-use crate::bands::process_bands;
+use crate::bands::{process_bands_with, BandsScratch};
 use crate::cache::{GlyphCache, GlyphInfo};
 use crate::font::Font;
 
@@ -56,6 +56,7 @@ pub fn shape_text(
     let mut glyphs = Vec::with_capacity(infos.len());
     let mut x = start_x;
     let mut y = start_y;
+    let mut scratch = BandsScratch::default();
 
     for (info, pos) in infos.iter().zip(positions.iter()) {
         let glyph_id = info.glyph_id;
@@ -66,7 +67,7 @@ pub fn shape_text(
 
         let cached = cache.get(glyph_id).or_else(|| {
             let outlines = font.load_glyph(GlyphId(glyph_id as u16))?;
-            let band = process_bands(&outlines);
+            let band = process_bands_with(&outlines, &mut scratch);
             Some(cache.insert(glyph_id, band))
         });
 

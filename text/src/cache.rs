@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::bands::{BandData, BAND_TEXTURE_WIDTH};
+use crate::bands::{BandData, BAND_TEXTURE_WIDTH, CURVE_TEXTURE_WIDTH};
 
 #[derive(Clone, Copy, Debug)]
 pub struct GlyphInfo {
@@ -13,8 +13,8 @@ pub struct GlyphInfo {
 }
 
 pub struct GlyphCache {
-    curve_texels: Vec<[f32; 4]>,
-    band_texels: Vec<[u32; 4]>,
+    curve_texels: Vec<[u16; 4]>,
+    band_texels: Vec<[u16; 2]>,
     curve_width: u32,
     curve_height: u32,
     band_width: u32,
@@ -28,7 +28,7 @@ impl GlyphCache {
         Self {
             curve_texels: Vec::new(),
             band_texels: Vec::new(),
-            curve_width: BAND_TEXTURE_WIDTH,
+            curve_width: CURVE_TEXTURE_WIDTH,
             curve_height: 0,
             band_width: BAND_TEXTURE_WIDTH,
             band_height: 0,
@@ -47,8 +47,8 @@ impl GlyphCache {
 
     /// Insert a glyph's processed band data; returns its assigned `GlyphInfo`.
     pub fn insert(&mut self, glyph_id: u32, band_data: BandData) -> GlyphInfo {
-        let num_bands = (band_data.band_max.0.max(band_data.band_max.1) + 1) as usize;
-        let header_count = num_bands * 2;
+        let header_count =
+            (band_data.band_max.0 + 1 + band_data.band_max.1 + 1) as usize;
         let curve_start = self.alloc_curves(&band_data.curve_texels);
         let band_start = self.alloc_bands(&band_data.band_texels, header_count, curve_start);
         let info = GlyphInfo {
@@ -62,57 +62,57 @@ impl GlyphCache {
         info
     }
 
-    fn alloc_curves(&mut self, texels: &[[f32; 4]]) -> (u32, u32) {
+    fn alloc_curves(&mut self, texels: &[[u16; 4]]) -> (u32, u32) {
+        let w = CURVE_TEXTURE_WIDTH as usize;
         let start = self.curve_texels.len();
-        let col = (start % BAND_TEXTURE_WIDTH as usize) as u32;
-        let row = (start / BAND_TEXTURE_WIDTH as usize) as u32;
+        let col = (start % w) as u32;
+        let row = (start / w) as u32;
         self.curve_texels.extend_from_slice(texels);
         let end = self.curve_texels.len();
-        let end_row = (end + BAND_TEXTURE_WIDTH as usize - 1) / BAND_TEXTURE_WIDTH as usize;
+        let end_row = (end + w - 1) / w;
         self.curve_height = self.curve_height.max(end_row as u32);
         (col, row)
     }
 
     fn alloc_bands(
         &mut self,
-        texels: &[[u32; 4]],
+        texels: &[[u16; 2]],
         header_count: usize,
         curve_start: (u32, u32),
     ) -> (u32, u32) {
+        let w = BAND_TEXTURE_WIDTH as usize;
         let start = self.band_texels.len();
-        let col = (start % BAND_TEXTURE_WIDTH as usize) as u32;
-        let row = (start / BAND_TEXTURE_WIDTH as usize) as u32;
+        let col = (start % w) as u32;
+        let row = (start / w) as u32;
         for (i, t) in texels.iter().enumerate() {
             let mut tc = *t;
             if i >= header_count {
-                let (x, y) = offset_curve_coord(curve_start, (t[0], t[1]));
-                tc[0] = x;
-                tc[1] = y;
+                let abs = offset_curve_coord(curve_start, (t[0] as u32, t[1] as u32));
+                tc[0] = abs.0 as u16;
+                tc[1] = abs.1 as u16;
             }
             self.band_texels.push(tc);
         }
         let end = self.band_texels.len();
-        let end_row = (end + BAND_TEXTURE_WIDTH as usize - 1) / BAND_TEXTURE_WIDTH as usize;
+        let end_row = (end + w - 1) / w;
         self.band_height = self.band_height.max(end_row as u32);
         (col, row)
     }
 
-    pub fn curve_data(&self) -> &[[f32; 4]] { &self.curve_texels }
-    pub fn band_data(&self) -> &[[u32; 4]] { &self.band_texels }
+    pub fn curve_data(&self) -> &[[u16; 4]] { &self.curve_texels }
+    pub fn band_data(&self) -> &[[u16; 2]] { &self.band_texels }
     pub fn curve_size(&self) -> (u32, u32) { (self.curve_width, self.curve_height.max(1)) }
     pub fn band_size(&self) -> (u32, u32) { (self.band_width, self.band_height.max(1)) }
     pub fn revision(&self) -> u64 { self.revision }
 }
 
 fn offset_curve_coord(start: (u32, u32), local: (u32, u32)) -> (u32, u32) {
-    let absolute = start.1 as usize * BAND_TEXTURE_WIDTH as usize
+    let w = CURVE_TEXTURE_WIDTH as usize;
+    let absolute = start.1 as usize * w
         + start.0 as usize
-        + local.1 as usize * BAND_TEXTURE_WIDTH as usize
+        + local.1 as usize * w
         + local.0 as usize;
-    (
-        (absolute % BAND_TEXTURE_WIDTH as usize) as u32,
-        (absolute / BAND_TEXTURE_WIDTH as usize) as u32,
-    )
+    ((absolute % w) as u32, (absolute / w) as u32)
 }
 
 impl Default for GlyphCache {

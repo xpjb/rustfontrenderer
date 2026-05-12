@@ -53,6 +53,14 @@ fn calc_band_loc(glyph_loc: vec2i, offset: u32) -> vec2i {
     return vec2i(col, glyph_loc.y + row_delta);
 }
 
+// Curve atlas is 4096 wide; sequential texels along a contour may wrap rows.
+fn fetch_curve(curve_tex: texture_2d<f32>, loc: vec2i, off: i32) -> vec4f {
+    let total = loc.x + off;
+    let col = total & 4095;
+    let row_delta = total >> 12;
+    return textureLoad(curve_tex, vec2i(col, loc.y + row_delta), 0);
+}
+
 fn calc_coverage(xcov: f32, ycov: f32, xwgt: f32, ywgt: f32) -> f32 {
     var coverage = max(
         abs(xcov * xwgt + ycov * ywgt) / max(xwgt + ywgt, 1.0 / 65536.0),
@@ -92,9 +100,12 @@ fn slug_render(
     for (var i: i32 = 0; i < i32(hband_data.x); i = i + 1) {
         let curve_loc_v = textureLoad(band_tex, vec2i(hband_loc.x + i, hband_loc.y), 0);
         let curve_loc = vec2i(i32(curve_loc_v.x), i32(curve_loc_v.y));
-        let p12 = textureLoad(curve_tex, curve_loc, 0)
-            - vec4f(render_coord.x, render_coord.y, render_coord.x, render_coord.y);
-        let p3 = textureLoad(curve_tex, vec2i(curve_loc.x + 1, curve_loc.y), 0).xy - render_coord;
+        let t0 = fetch_curve(curve_tex, curve_loc, 0);
+        let t1 = fetch_curve(curve_tex, curve_loc, 1).xy;
+        let p1 = t0.xy - render_coord;
+        let p2 = t0.zw - render_coord;
+        let p3 = t1 - render_coord;
+        let p12 = vec4f(p1.x, p1.y, p2.x, p2.y);
         if max(max(p12.x, p12.z), p3.x) * pixels_per_em.x < -0.5 { break; }
         let code = calc_root_code(p12.y, p12.w, p3.y);
         if code != 0u {
@@ -122,9 +133,12 @@ fn slug_render(
     for (var i: i32 = 0; i < i32(vband_data.x); i = i + 1) {
         let curve_loc_v = textureLoad(band_tex, vec2i(vband_loc.x + i, vband_loc.y), 0);
         let curve_loc = vec2i(i32(curve_loc_v.x), i32(curve_loc_v.y));
-        let p12 = textureLoad(curve_tex, curve_loc, 0)
-            - vec4f(render_coord.x, render_coord.y, render_coord.x, render_coord.y);
-        let p3 = textureLoad(curve_tex, vec2i(curve_loc.x + 1, curve_loc.y), 0).xy - render_coord;
+        let t0 = fetch_curve(curve_tex, curve_loc, 0);
+        let t1 = fetch_curve(curve_tex, curve_loc, 1).xy;
+        let p1 = t0.xy - render_coord;
+        let p2 = t0.zw - render_coord;
+        let p3 = t1 - render_coord;
+        let p12 = vec4f(p1.x, p1.y, p2.x, p2.y);
         if max(max(p12.y, p12.w), p3.y) * pixels_per_em.y < -0.5 { break; }
         let code = calc_root_code(p12.x, p12.z, p3.x);
         if code != 0u {

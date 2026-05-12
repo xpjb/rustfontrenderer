@@ -12,32 +12,56 @@ impl QuadraticCurve {
     pub fn max_x(&self) -> f32 { self.p1.0.max(self.p2.0).max(self.p3.0) }
     pub fn min_y(&self) -> f32 { self.p1.1.min(self.p2.1).min(self.p3.1) }
     pub fn max_y(&self) -> f32 { self.p1.1.max(self.p2.1).max(self.p3.1) }
+
+    /// True when the curve degenerates to a horizontal segment (constant y).
+    pub fn is_horizontal(&self) -> bool {
+        let eps = 1.0 / 65536.0;
+        (self.p1.1 - self.p3.1).abs() < eps
+            && (self.p2.1 - self.p3.1).abs() < eps
+    }
+
+    /// True when the curve degenerates to a vertical segment (constant x).
+    pub fn is_vertical(&self) -> bool {
+        let eps = 1.0 / 65536.0;
+        (self.p1.0 - self.p3.0).abs() < eps
+            && (self.p2.0 - self.p3.0).abs() < eps
+    }
 }
 
-/// Glyph outlines as quadratic Bézier curves in em-space (typically 0..1).
+/// Glyph outlines as a list of contours; each contour is a chain of quadratic
+/// Béziers where consecutive curves share an endpoint
+/// (`contour[i].p3 == contour[i+1].p1`). Coordinates are em-space (~ 0..1).
 #[derive(Clone, Debug)]
 pub struct GlyphOutlines {
-    pub curves: Vec<QuadraticCurve>,
+    pub contours: Vec<Vec<QuadraticCurve>>,
     pub units_per_em: u16,
 }
 
 impl GlyphOutlines {
     /// Em-space bounding box (min_x, min_y, max_x, max_y). Returns zeros for empty glyphs.
     pub fn bounding_box(&self) -> (f32, f32, f32, f32) {
-        if self.curves.is_empty() {
-            return (0.0, 0.0, 0.0, 0.0);
-        }
+        let mut found = false;
         let mut min_x = f32::MAX;
         let mut min_y = f32::MAX;
         let mut max_x = f32::MIN;
         let mut max_y = f32::MIN;
-        for c in &self.curves {
-            min_x = min_x.min(c.min_x());
-            min_y = min_y.min(c.min_y());
-            max_x = max_x.max(c.max_x());
-            max_y = max_y.max(c.max_y());
+        for contour in &self.contours {
+            for c in contour {
+                min_x = min_x.min(c.min_x());
+                min_y = min_y.min(c.min_y());
+                max_x = max_x.max(c.max_x());
+                max_y = max_y.max(c.max_y());
+                found = true;
+            }
+        }
+        if !found {
+            return (0.0, 0.0, 0.0, 0.0);
         }
         (min_x, min_y, max_x, max_y)
+    }
+
+    pub fn curve_count(&self) -> usize {
+        self.contours.iter().map(|c| c.len()).sum()
     }
 }
 
@@ -65,17 +89,21 @@ impl OutlineCollector {
             self.contours.push(std::mem::take(&mut self.current));
         }
         let upem = self.units_per_em as f32;
-        let curves: Vec<QuadraticCurve> = self
+        let contours: Vec<Vec<QuadraticCurve>> = self
             .contours
             .into_iter()
-            .flatten()
-            .map(|c| QuadraticCurve {
-                p1: (c.p1.0 / upem, c.p1.1 / upem),
-                p2: (c.p2.0 / upem, c.p2.1 / upem),
-                p3: (c.p3.0 / upem, c.p3.1 / upem),
+            .map(|contour| {
+                contour
+                    .into_iter()
+                    .map(|c| QuadraticCurve {
+                        p1: (c.p1.0 / upem, c.p1.1 / upem),
+                        p2: (c.p2.0 / upem, c.p2.1 / upem),
+                        p3: (c.p3.0 / upem, c.p3.1 / upem),
+                    })
+                    .collect()
             })
             .collect();
-        GlyphOutlines { curves, units_per_em: self.units_per_em }
+        GlyphOutlines { contours, units_per_em: self.units_per_em }
     }
 }
 
@@ -89,10 +117,10 @@ impl ttf_parser::OutlineBuilder for OutlineCollector {
     }
 
     fn line_to(&mut self, x: f32, y: f32) {
+        // Encode a line as a quadratic with duplicated endpoint, per Lengyel's
+        // recommendation: avoids the degenerate a == 0 path in the solver.
         let (lx, ly) = self.last;
-        let mx = (lx + x) * 0.5;
-        let my = (ly + y) * 0.5;
-        self.current.push(QuadraticCurve { p1: (lx, ly), p2: (mx, my), p3: (x, y) });
+        self.current.push(QuadraticCurve { p1: (lx, ly), p2: (x, y), p3: (x, y) });
         self.last = (x, y);
     }
 

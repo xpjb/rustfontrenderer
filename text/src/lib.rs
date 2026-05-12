@@ -20,7 +20,7 @@ pub mod renderer;
 
 pub use font::{Font, FontMetrics};
 pub use outline::{GlyphOutlines, QuadraticCurve};
-pub use bands::{process_bands, BandData};
+pub use bands::{process_bands, process_bands_with, BandData, BandsScratch};
 pub use cache::{GlyphCache, GlyphInfo};
 pub use layout::{shape_text, ShapedGlyph, ShapedRun};
 pub use linebreak::{break_lines, Line};

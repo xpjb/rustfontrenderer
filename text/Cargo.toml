@@ -13,3 +13,4 @@ ttf-parser = { workspace = true }
 rustybuzz = { workspace = true }
 bytemuck = { workspace = true }
 glam = { workspace = true }
+half = { workspace = true }

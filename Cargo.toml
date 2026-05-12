@@ -10,3 +10,4 @@ bytemuck = { version = "1.16", features = ["derive"] }
 glam = "0.29"
 winit = "0.29"
 pollster = "0.3"
+half = { version = "2", features = ["bytemuck"] }
