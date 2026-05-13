@@ -12,7 +12,7 @@ use crate::font::Font;
 /// One positioned glyph along a baseline. `x`/`y` are em-space pen positions
 /// (glyph origin); `advance`/`width` are em-space metrics useful for layout.
 #[derive(Clone, Copy, Debug)]
-pub struct ShapedGlyph {
+pub(crate) struct ShapedGlyph {
     pub glyph_id: u32,
     pub cluster: u32,
     pub x: f32,
@@ -26,7 +26,7 @@ pub struct ShapedGlyph {
 
 /// A shaped, cached run of glyphs along a single baseline starting at (`origin_x`, `origin_y`).
 #[derive(Clone, Debug)]
-pub struct ShapedRun {
+pub(crate) struct ShapedRun {
     pub glyphs: Vec<ShapedGlyph>,
     pub origin_x: f32,
     pub origin_y: f32,
@@ -36,7 +36,7 @@ pub struct ShapedRun {
 
 /// Shape `text` with the given font, ensuring all glyphs are populated in `cache`.
 /// Pen positions are in em-space relative to (`start_x`, `start_y`).
-pub fn shape_text(
+pub(crate) fn shape_text(
     font: &Font,
     cache: &mut GlyphCache,
     text: &str,

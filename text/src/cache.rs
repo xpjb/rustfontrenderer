@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::bands::{BandData, BAND_TEXTURE_WIDTH, CURVE_TEXTURE_WIDTH};
 
 #[derive(Clone, Copy, Debug)]
-pub struct GlyphInfo {
+pub(crate) struct GlyphInfo {
     pub curve_start: (u32, u32),
     pub band_start: (u32, u32),
     pub band_max: (u32, u32),

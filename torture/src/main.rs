@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use bytemuck::cast_slice;
 use glam::{Mat4, Vec2, Vec3};
 use pollster::block_on;
-use text::{shape_text, Font, GlyphCache, TextAtlas, TextRenderer, TextVertex};
+use text::{Align, TextArgs, TextAtlas, TextEngine, TextRenderer, TextVertex};
 use winit::{
     event::{ElementState, Event, KeyEvent, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -71,13 +71,22 @@ fn main() {
 async fn run() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let font_path = manifest_dir.join("..").join("assets").join("NotoSansSC-Regular.ttf");
-    let font = Font::load(font_path.to_str().unwrap()).expect("load font");
-    let metrics = font.metrics();
+    let mut engine = TextEngine::load(font_path.to_str().unwrap()).expect("load font");
+    let metrics = engine.metrics();
     let line_height_em = metrics.line_height() * LINE_SPACING;
 
-    let mut cache = GlyphCache::new();
-    let phrase_bank = PhraseBank::new(&font, &mut cache);
-    let _ = shape_text(&font, &mut cache, OVERLAY_GLYPH_WARMUP, 0.0, 0.0);
+    let phrase_bank = PhraseBank::new(&mut engine);
+
+    let warmup_args = TextArgs {
+        size_px: INITIAL_FONT_SIZE,
+        color: [1.0, 1.0, 1.0, 1.0],
+        max_width_px: None,
+        line_spacing: LINE_SPACING,
+        align: Align::Left,
+    };
+    engine.set_layout_anchor(0.0, 0.0);
+    engine.text(0.0, 0.0, OVERLAY_GLYPH_WARMUP, &warmup_args);
+    let _ = engine.flush();
 
     let event_loop = EventLoop::new().unwrap();
     let window = Arc::new(
@@ -131,7 +140,7 @@ async fn run() {
     surface.configure(&device, &config);
 
     let renderer = TextRenderer::new(&device, &config);
-    let mut atlas = TextAtlas::new(&device, &queue, &renderer.atlas_layout, &cache);
+    let mut atlas = TextAtlas::new(&device, &queue, &renderer.atlas_layout, engine.glyph_cache());
     let mut vbuf = DynamicVertexBuffer::new(&device, 4096);
 
     let mut flyer_count = INITIAL_FLYER_COUNT;
@@ -227,49 +236,47 @@ async fn run() {
                         let elapsed = start.elapsed().as_secs_f32();
 
                         let mut frame_scopes = Vec::with_capacity(6);
-                        let mut vertices = Vec::with_capacity(estimate_vertex_capacity(
-                            flyer_count,
-                            &phrase_bank,
-                            &flyers,
-                            overlay.vertex_count_hint(),
-                        ));
+
+                        engine.set_layout_anchor(0.0, world.baseline_origin_px);
 
                         timed_scope_ms!("flyers", frame_scopes, {
                             for flyer in &flyers {
-                                let base = phrase_bank.entry(flyer.phrase_index);
-                                let baseline = flyer.baseline_at(elapsed, &world, base.width_em * font_size);
-                                let offset_em = baseline_px_to_em(baseline, world.baseline_origin_px, font_size);
+                                let entry = phrase_bank.entry(flyer.phrase_index);
+                                let baseline =
+                                    flyer.baseline_at(elapsed, &world, entry.width_em * font_size);
                                 let color = animated_color(flyer.hue + elapsed * flyer.hue_rate, 0.95);
-                                append_vertices_with_transform(&mut vertices, &base.vertices, offset_em, color);
+                                let mut args = entry.args.clone();
+                                args.size_px = font_size;
+                                args.color = color;
+                                engine.text(baseline.x, baseline.y, entry.phrase, &args);
                             }
                         });
 
                         let summary = stats.summary();
                         if overlay.should_refresh(frame_start) {
                             timed_scope_ms!("overlay_rebuild", frame_scopes, {
-                                overlay.rebuild(
-                                    &font,
-                                    &mut cache,
+                                overlay.refresh_strings(
                                     &summary,
                                     &phrase_bank,
                                     &world,
                                     flyer_count,
-                                    vertices.len(),
                                     present_mode,
-                                    line_height_em,
                                 );
                             });
                         }
+                        overlay.emit(&mut engine, &world, line_height_em);
                         timed_scope_ms!("atlas_sync", frame_scopes, {
-                            atlas.sync(&device, &queue, &renderer.atlas_layout, &cache);
+                            atlas.sync(&device, &queue, &renderer.atlas_layout, engine.glyph_cache());
                         });
-                        timed_scope_ms!("overlay_append", frame_scopes, {
-                            overlay.append_vertices(&mut vertices);
+
+                        let verts = timed_scope_ms!("flush", frame_scopes, {
+                            engine.flush()
                         });
+                        let vertex_count = verts.len();
                         let build_ms = frame_scopes.iter().map(|(_, ms)| *ms).sum::<f32>();
 
                         timed_scope_ms!("vertex_upload", frame_scopes, {
-                            vbuf.write(&device, &queue, &vertices);
+                            vbuf.write(&device, &queue, verts);
                         });
 
                         let view = frame.texture.create_view(&Default::default());
@@ -294,7 +301,7 @@ async fn run() {
                                 &view,
                                 &atlas,
                                 vbuf.buffer(),
-                                vertices.len() as u32,
+                                vertex_count as u32,
                                 matrix,
                                 (cur.width, cur.height),
                                 Some(BACKGROUND),
@@ -322,7 +329,7 @@ async fn run() {
                             build_ms,
                             upload_ms,
                             submit_ms,
-                            vertex_count: vertices.len(),
+                            vertex_count,
                             scopes: frame_scopes,
                         });
                         perf.maybe_print(flyer_count, present_mode);
@@ -345,8 +352,9 @@ struct SceneWorld {
 }
 
 struct PhraseEntry {
-    vertices: Vec<TextVertex>,
+    phrase: &'static str,
     width_em: f32,
+    args: TextArgs,
 }
 
 struct PhraseBank {
@@ -354,14 +362,28 @@ struct PhraseBank {
 }
 
 impl PhraseBank {
-    fn new(font: &Font, cache: &mut GlyphCache) -> Self {
+    fn new(engine: &mut TextEngine) -> Self {
+        let measure_args = TextArgs {
+            size_px: 1.0,
+            color: [1.0, 1.0, 1.0, 1.0],
+            max_width_px: None,
+            line_spacing: LINE_SPACING,
+            align: Align::Left,
+        };
+        let template_args = TextArgs {
+            size_px: INITIAL_FONT_SIZE,
+            color: [1.0, 1.0, 1.0, 1.0],
+            max_width_px: None,
+            line_spacing: LINE_SPACING,
+            align: Align::Left,
+        };
         let mut entries = Vec::with_capacity(PHRASES.len());
         for phrase in PHRASES {
-            let run = shape_text(font, cache, phrase, 0.0, 0.0);
-            let vertices = text::build_run_vertices(&[(&run, [1.0, 1.0, 1.0, 1.0])]);
+            let m = engine.measure(phrase, &measure_args);
             entries.push(PhraseEntry {
-                width_em: run.total_advance,
-                vertices,
+                phrase,
+                width_em: m.width_px,
+                args: template_args.clone(),
             });
         }
         Self { entries }
@@ -604,15 +626,17 @@ fn percentile(sorted: &[f32], fraction: f32) -> f32 {
 }
 
 struct StatsOverlay {
-    vertices: Vec<TextVertex>,
     last_refresh: Instant,
+    hud_lines: Vec<String>,
+    footer: String,
 }
 
 impl StatsOverlay {
     fn new() -> Self {
         Self {
-            vertices: Vec::new(),
             last_refresh: Instant::now() - STATS_REFRESH,
+            hud_lines: Vec::new(),
+            footer: String::new(),
         }
     }
 
@@ -625,89 +649,76 @@ impl StatsOverlay {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn rebuild(
+    fn refresh_strings(
         &mut self,
-        font: &Font,
-        cache: &mut GlyphCache,
         stats: &FrameSummary,
         bank: &PhraseBank,
         world: &SceneWorld,
         flyer_count: usize,
-        vertex_count: usize,
         present_mode: wgpu::PresentMode,
-        line_height_em: f32,
     ) {
         self.last_refresh = Instant::now();
-        self.vertices.clear();
 
-        let lines = [
-            format!("fps {:7.1}   frame {:6.2} ms   avg {:6.2} ms", stats.fps, stats.latest_ms, stats.avg_ms),
-            format!(
-                "p50 {:6.2}   p90 {:6.2}   p99 {:6.2}   max {:6.2}",
-                stats.p50_ms, stats.p90_ms, stats.p99_ms, stats.max_ms
-            ),
-            format!(
-                "samples {:4}   flyers {:5}   phrases {:2}   verts {:7}",
-                stats.samples,
-                flyer_count,
-                bank.entries.len(),
-                vertex_count
-            ),
-            format!("present {:?}   poll uncapped", present_mode),
-            format!("font {:.0}px   Up/Down density   Left/Right size   Esc quits", world.font_size_px),
-        ];
+        self.hud_lines.clear();
+        self.hud_lines.push(format!(
+            "fps {:7.1}   frame {:6.2} ms   avg {:6.2} ms",
+            stats.fps, stats.latest_ms, stats.avg_ms
+        ));
+        self.hud_lines.push(format!(
+            "p50 {:6.2}   p90 {:6.2}   p99 {:6.2}   max {:6.2}",
+            stats.p50_ms, stats.p90_ms, stats.p99_ms, stats.max_ms
+        ));
+        self.hud_lines.push(format!(
+            "samples {:4}   flyers {:5}   phrases {:2}",
+            stats.samples,
+            flyer_count,
+            bank.entries.len(),
+        ));
+        self.hud_lines
+            .push(format!("present {:?}   poll uncapped", present_mode));
+        self.hud_lines.push(format!(
+            "font {:.0}px   Up/Down density   Left/Right size   Esc quits",
+            world.font_size_px
+        ));
 
-        let padding_x_em = 12.0 / world.font_size_px;
-        for (i, line) in lines.iter().enumerate() {
-            let y_em = -(i as f32) * line_height_em;
-            let run = shape_text(font, cache, line, padding_x_em, y_em);
-            let base = text::build_run_vertices(&[(&run, [1.0, 1.0, 1.0, 1.0])]);
-            let fg = [0.97, 0.97, 0.98, 1.0];
-            append_vertices_with_transform(&mut self.vertices, &base, Vec2::ZERO, fg);
-        }
-
-        let footer_y_em = -((lines.len() as f32) + 0.35) * line_height_em;
-        let footer = format!(
+        self.footer = format!(
             "window {:.0}x{:.0}   baseline {:.1}px   line {:.1}px",
             world.width_px, world.height_px, world.baseline_origin_px, world.line_height_px
         );
-        let run = shape_text(font, cache, &footer, padding_x_em, footer_y_em);
-        let base = text::build_run_vertices(&[(&run, [1.0, 1.0, 1.0, 1.0])]);
-        append_vertices_with_transform(&mut self.vertices, &base, Vec2::ZERO, [0.82, 0.86, 0.91, 1.0]);
     }
 
-    fn append_vertices(&self, target: &mut Vec<TextVertex>) {
-        target.extend_from_slice(&self.vertices);
-    }
+    fn emit(&self, engine: &mut TextEngine, world: &SceneWorld, line_height_em: f32) {
+        if self.hud_lines.is_empty() {
+            return;
+        }
 
-    fn vertex_count_hint(&self) -> usize {
-        self.vertices.len()
-    }
-}
+        let padding_left_px = 12.0;
+        let line_step_px = line_height_em * world.font_size_px;
 
-fn append_vertices_with_transform(
-    target: &mut Vec<TextVertex>,
-    base: &[TextVertex],
-    offset_em: Vec2,
-    color: [f32; 4],
-) {
-    target.reserve(base.len());
-    for vertex in base {
-        let mut out = *vertex;
-        out.pos[0] += offset_em.x;
-        out.pos[1] += offset_em.y;
-        out.jac[0] += offset_em.x;
-        out.jac[1] += offset_em.y;
-        out.col = color;
-        target.push(out);
-    }
-}
+        let hud_args = TextArgs {
+            size_px: world.font_size_px,
+            color: [0.97, 0.97, 0.98, 1.0],
+            max_width_px: None,
+            line_spacing: LINE_SPACING,
+            align: Align::Left,
+        };
 
-fn baseline_px_to_em(baseline_px: Vec2, baseline_origin_px: f32, font_size: f32) -> Vec2 {
-    Vec2::new(
-        baseline_px.x / font_size,
-        -((baseline_px.y - baseline_origin_px) / font_size),
-    )
+        for (i, line) in self.hud_lines.iter().enumerate() {
+            let baseline_y = world.baseline_origin_px + i as f32 * line_step_px;
+            engine.text(padding_left_px, baseline_y, line.as_str(), &hud_args);
+        }
+
+        let footer_baseline_px =
+            world.baseline_origin_px + (self.hud_lines.len() as f32 + 0.35) * line_step_px;
+        let footer_args = TextArgs {
+            size_px: world.font_size_px,
+            color: [0.82, 0.86, 0.91, 1.0],
+            max_width_px: None,
+            line_spacing: LINE_SPACING,
+            align: Align::Left,
+        };
+        engine.text(padding_left_px, footer_baseline_px, self.footer.as_str(), &footer_args);
+    }
 }
 
 fn choose_surface_format(caps: &wgpu::SurfaceCapabilities) -> wgpu::TextureFormat {
@@ -730,21 +741,6 @@ fn choose_present_mode(caps: &wgpu::SurfaceCapabilities) -> wgpu::PresentMode {
         .into_iter()
         .find(|mode| caps.present_modes.contains(mode))
         .unwrap_or(caps.present_modes[0])
-}
-
-fn estimate_vertex_capacity(
-    flyer_count: usize,
-    bank: &PhraseBank,
-    flyers: &[Flyer],
-    overlay_vertices: usize,
-) -> usize {
-    let avg = flyers
-        .iter()
-        .take(32)
-        .map(|flyer| bank.entry(flyer.phrase_index).vertices.len() * 5)
-        .sum::<usize>()
-        / flyers.len().min(32).max(1);
-    flyer_count * avg + overlay_vertices
 }
 
 fn animated_color(hue: f32, alpha: f32) -> [f32; 4] {

@@ -21,7 +21,7 @@ impl FontMetrics {
 }
 
 /// A loaded font. Bytes are heap-leaked so the underlying face has a `'static` lifetime.
-pub struct Font {
+pub(crate) struct Font {
     #[allow(dead_code)]
     data: &'static [u8],
     face: RustyFace<'static>,

@@ -2,27 +2,19 @@
 //!
 //! Loads TTF/OTF fonts, shapes text with rustybuzz, builds a GPU glyph cache of
 //! quadratic Bézier curves and bands, and renders solid filled text via a wgpu
-//! pipeline. Exposes per-glyph layout metrics (advance / width) for caller-side
-//! layout, and includes a naive whitespace-based line breaker for a given width.
-//!
-//! Slug computes per-pixel *coverage* (fraction filled), not signed distance,
-//! so this crate does fills only — strokes/outlines wider than 1 px need a
-//! different technique (SDF, inflated-geometry passes, etc.).
+//! pipeline.
 
-pub mod font;
-pub mod outline;
-pub mod bands;
-pub mod cache;
-pub mod layout;
-pub mod linebreak;
-pub mod vertex;
-pub mod renderer;
+mod font;
+mod outline;
+mod bands;
+mod cache;
+mod layout;
+mod linebreak;
+mod vertex;
+mod renderer;
+pub mod engine;
 
-pub use font::{Font, FontMetrics};
-pub use outline::{GlyphOutlines, QuadraticCurve};
-pub use bands::{process_bands, process_bands_with, BandData, BandsScratch};
-pub use cache::{GlyphCache, GlyphInfo};
-pub use layout::{shape_text, ShapedGlyph, ShapedRun};
-pub use linebreak::{break_lines, Line};
-pub use vertex::{TextVertex, build_run_vertices};
-pub use renderer::{TextRenderer, TextAtlas};
+pub use engine::{Align, Measured, PushedGlyph, TextArgs, TextEngine};
+pub use font::FontMetrics;
+pub use renderer::{TextAtlas, TextRenderer};
+pub use vertex::TextVertex;

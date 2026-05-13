@@ -7,7 +7,6 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::cache::GlyphInfo;
-use crate::layout::ShapedRun;
 
 /// 56 bytes per vertex. Layout matches the WGSL shader.
 #[repr(C)]
@@ -23,6 +22,16 @@ pub struct TextVertex {
     pub bnd: [f32; 4],
     /// col = RGBA.
     pub col: [f32; 4],
+}
+
+pub(crate) fn push_glyph_vertices(
+    out: &mut Vec<TextVertex>,
+    info: &GlyphInfo,
+    pen_em_x: f32,
+    pen_em_y: f32,
+    color: [f32; 4],
+) {
+    out.extend_from_slice(&glyph_quad(info, pen_em_x, pen_em_y, color));
 }
 
 fn glyph_quad(info: &GlyphInfo, px: f32, py: f32, color: [f32; 4]) -> [TextVertex; 6] {
@@ -65,19 +74,6 @@ fn glyph_quad(info: &GlyphInfo, px: f32, py: f32, color: [f32; 4]) -> [TextVerte
             bnd,
             col: color,
         };
-    }
-    out
-}
-
-/// Build a flat vertex list for one or more shaped runs.
-pub fn build_run_vertices(runs: &[(&ShapedRun, [f32; 4])]) -> Vec<TextVertex> {
-    let mut out = Vec::new();
-    for (run, color) in runs {
-        for g in &run.glyphs {
-            for v in glyph_quad(&g.info, g.x, g.y, *color) {
-                out.push(v);
-            }
-        }
     }
     out
 }

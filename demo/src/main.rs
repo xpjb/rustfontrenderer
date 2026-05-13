@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use glam::{Mat4, Vec3};
 use pollster::block_on;
-use text::{break_lines, shape_text, Font, GlyphCache, TextAtlas, TextRenderer};
+use text::{Align, TextArgs, TextAtlas, TextEngine, TextRenderer};
 use winit::{
     event::{ElementState, Event, KeyEvent, WindowEvent},
     event_loop::EventLoop,
@@ -35,31 +35,30 @@ fn main() {
 async fn run() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let font_path = manifest_dir.join("..").join("assets").join("NotoSansSC-Regular.ttf");
-    let font = Font::load(font_path.to_str().unwrap()).expect("load font");
+    let mut engine = TextEngine::load(font_path.to_str().unwrap()).expect("load font");
 
     let column_w_px = WINDOW_W as f32 - MARGIN * 2.0;
-    let column_w_em = column_w_px / FONT_SIZE;
-    let lines = break_lines(&font, SAMPLE, column_w_em);
+    let metrics = engine.metrics();
+    let measured = engine.measure(
+        SAMPLE,
+        &TextArgs {
+            size_px: FONT_SIZE,
+            color: [0.0; 4],
+            max_width_px: Some(column_w_px),
+            line_spacing: LINE_SPACING,
+            align: Align::Left,
+        },
+    );
 
-    let mut cache = GlyphCache::new();
-    let metrics = font.metrics();
-    let line_height_em = metrics.line_height() * LINE_SPACING;
-
-    let mut runs = Vec::new();
-    let mut y_em = 0.0;
-    for line in &lines {
-        let run = shape_text(&font, &mut cache, &line.text, 0.0, y_em);
-        runs.push(run);
-        y_em -= line_height_em;
-    }
-
-    println!("Wrapped to {} lines (column = {:.1}em / {:.0}px):", lines.len(), column_w_em, column_w_px);
-    for (i, line) in lines.iter().enumerate() {
-        println!("  [{:>2}] adv={:5.2}em  {:?}", i, line.advance, line.text);
-    }
-    println!("Cache: {} glyph(s); curve tex {:?}; band tex {:?}",
-        runs.iter().map(|r| r.glyphs.len()).sum::<usize>(),
-        cache.curve_size(), cache.band_size());
+    println!(
+        "Wrapped block: {:.0}px wide × {:.0}px tall, {} lines (column = {:.0}px)",
+        measured.width_px, measured.height_px, measured.line_count, column_w_px
+    );
+    println!(
+        "Cache: curve tex {:?}; band tex {:?}",
+        engine.glyph_cache().curve_size(),
+        engine.glyph_cache().band_size()
+    );
 
     let event_loop = EventLoop::new().unwrap();
     let window = Arc::new(
@@ -100,13 +99,7 @@ async fn run() {
     surface.configure(&device, &config);
 
     let renderer = TextRenderer::new(&device, &config);
-    let atlas = TextAtlas::new(&device, &queue, &renderer.atlas_layout, &cache);
-
-    let color = [0.10, 0.10, 0.12, 1.0];
-    let runs_ref: Vec<_> = runs.iter().map(|r| (r, color)).collect();
-    let vertices = text::build_run_vertices(&runs_ref);
-    let vbuf = TextRenderer::build_vertices(&device, &vertices);
-    let count = vertices.len() as u32;
+    let mut atlas = TextAtlas::new(&device, &queue, &renderer.atlas_layout, engine.glyph_cache());
 
     window.request_redraw();
 
@@ -128,7 +121,27 @@ async fn run() {
                 },
                 WindowEvent::RedrawRequested => {
                     let cur = window.inner_size();
-                    if cur.width == 0 || cur.height == 0 { return; }
+                    if cur.width == 0 || cur.height == 0 {
+                        return;
+                    }
+
+                    let baseline_y = MARGIN + metrics.ascent * FONT_SIZE;
+                    engine.set_layout_anchor(MARGIN, baseline_y);
+
+                    let args = TextArgs {
+                        size_px: FONT_SIZE,
+                        color: [0.10, 0.10, 0.12, 1.0],
+                        max_width_px: Some(column_w_px),
+                        line_spacing: LINE_SPACING,
+                        align: Align::Left,
+                    };
+                    engine.text(MARGIN, baseline_y, SAMPLE, &args);
+
+                    atlas.sync(&device, &queue, &renderer.atlas_layout, engine.glyph_cache());
+
+                    let verts = engine.flush();
+                    let vbuf = TextRenderer::build_vertices(&device, verts);
+
                     let frame = match surface.get_current_texture() {
                         Ok(f) => f,
                         Err(_) => return,
@@ -139,16 +152,20 @@ async fn run() {
                     let proj = Mat4::orthographic_rh(
                         0.0, cur.width as f32, cur.height as f32, 0.0, -1.0, 1.0,
                     );
-                    let baseline_y = MARGIN + metrics.ascent * FONT_SIZE;
                     let model = Mat4::from_translation(Vec3::new(MARGIN, baseline_y, 0.0))
                         * Mat4::from_scale(Vec3::new(FONT_SIZE, -FONT_SIZE, 1.0));
                     let matrix = proj * model;
 
                     let bg = wgpu::Color { r: 0.95, g: 0.95, b: 0.97, a: 1.0 };
                     renderer.render(
-                        &queue, &mut encoder, &view, &atlas,
-                        &vbuf, count,
-                        matrix, (cur.width, cur.height),
+                        &queue,
+                        &mut encoder,
+                        &view,
+                        &atlas,
+                        &vbuf,
+                        verts.len() as u32,
+                        matrix,
+                        (cur.width, cur.height),
                         Some(bg),
                     );
 

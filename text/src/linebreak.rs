@@ -9,7 +9,7 @@ use crate::font::Font;
 
 /// One laid-out line: the source `text` slice and its measured em-space `advance`.
 #[derive(Clone, Debug)]
-pub struct Line {
+pub(crate) struct Line {
     pub text: String,
     pub advance: f32,
 }
@@ -17,7 +17,7 @@ pub struct Line {
 /// Break `text` into lines that fit within `max_width_em`. Measurement uses
 /// per-glyph horizontal advance from the font (no shaping kerning), which is
 /// adequate for naive layout.
-pub fn break_lines(font: &Font, text: &str, max_width_em: f32) -> Vec<Line> {
+pub(crate) fn break_lines(font: &Font, text: &str, max_width_em: f32) -> Vec<Line> {
     let mut lines = Vec::new();
     for paragraph in text.split('\n') {
         wrap_paragraph(font, paragraph, max_width_em, &mut lines);
@@ -99,7 +99,7 @@ fn tokenize(text: &str) -> impl Iterator<Item = &str> {
 }
 
 /// Em-space advance estimate for `text` using per-codepoint advance (no shaping).
-pub fn measure(font: &Font, text: &str) -> f32 {
+pub(crate) fn measure(font: &Font, text: &str) -> f32 {
     let mut total = 0.0;
     for ch in text.chars() {
         if let Some(gid) = font.glyph_index(ch) {
