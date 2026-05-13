@@ -1,15 +1,41 @@
 //! High-level text layout API: font + caches + per-frame glyph buffer.
+//!
+//! Vertices from [`TextEngine::flush`] use **window pixel** coordinates for `TextVertex::pos`.
+//! Pass an orthographic projection that maps `(0,0)..(width,height)` to clip space (no extra
+//! translation/scale for font size — each [`TextArgs::size_px`] is baked into layout and quads).
 
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 use crate::cache::{GlyphCache, GlyphInfo};
 use crate::font::{Font, FontMetrics};
 use crate::layout::{shape_text, ShapedGlyph};
 use crate::linebreak::{break_lines, Line};
-use crate::vertex::{push_glyph_vertices, TextVertex};
+use crate::renderer::TextAtlas;
+use crate::vertex::{push_glyph_quad_pixels, TextVertex};
 
 const SHAPE_CACHE_TTL_FRAMES: u64 = 60;
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+struct ShapeKey {
+    content: Arc<str>,
+    /// `f32::to_bits(max_width_px / size_px)` when wrapping; `0` when `max_width_px` is `None`.
+    max_width_em_bits: u32,
+    line_spacing_bits: u32,
+}
+
+fn make_shape_key(content: &str, args: &TextArgs) -> ShapeKey {
+    let size_px = args.size_px.max(0.0001);
+    ShapeKey {
+        content: Arc::from(content),
+        max_width_em_bits: args
+            .max_width_px
+            .map(|w| (w / size_px).to_bits())
+            .unwrap_or(0),
+        line_spacing_bits: args.line_spacing.to_bits(),
+    }
+}
 
 /// Arguments controlling sizing, wrapping, and alignment for `text` / `measure`.
 #[derive(Clone)]
@@ -48,8 +74,7 @@ pub struct Measured {
     pub line_count: u32,
 }
 
-/// One glyph pushed into the frame buffer; `x`/`y` are world-space baseline
-/// pen coordinates in pixels (match your orthographic layout).
+/// One glyph pushed into the frame buffer; `x`/`y` are baseline pen coordinates in pixels.
 pub struct PushedGlyph {
     pub glyph_id: u32,
     pub x: f32,
@@ -57,13 +82,6 @@ pub struct PushedGlyph {
     pub color: [f32; 4],
     pub(crate) info: GlyphInfo,
     size_px: f32,
-}
-
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
-struct ShapeKey {
-    content_hash: u64,
-    max_width_em_bits: u32,
-    line_spacing_bits: u32,
 }
 
 struct CachedShape {
@@ -83,13 +101,6 @@ pub struct TextEngine {
     frame: Vec<PushedGlyph>,
     vertex_scratch: Vec<TextVertex>,
     frame_counter: u64,
-    layout_anchor: [f32; 2],
-}
-
-fn hash_content(s: &str) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    s.hash(&mut hasher);
-    hasher.finish()
 }
 
 fn align_offset_em(align: Align, block_width_em: f32, line_advance_em: f32) -> f32 {
@@ -138,47 +149,38 @@ fn layout_lines_to_cache(
     }
 }
 
-fn build_shape_key(content: &str, max_width_px: Option<f32>, line_spacing: f32) -> ShapeKey {
-    ShapeKey {
-        content_hash: hash_content(content),
-        max_width_em_bits: max_width_px.map(f32::to_bits).unwrap_or(0),
-        line_spacing_bits: line_spacing.to_bits(),
-    }
-}
-
 impl TextEngine {
-    fn ensure_cached_shape(&mut self, content: &str, args: &TextArgs) -> ShapeKey {
-        let key = build_shape_key(content, args.max_width_px, args.line_spacing);
-        let size_px = args.size_px.max(0.0001);
+    fn ensure_cached_shape(&mut self, content: &str, args: &TextArgs) {
+        let key = make_shape_key(content, args);
         let fc = self.frame_counter;
+        let size_px = args.size_px.max(0.0001);
 
-        if !self.shape_cache.contains_key(&key) {
-            let max_width_em = args.max_width_px.map(|w| w / size_px);
-            let metrics = self.font.metrics();
-            let line_height_em = metrics.line_height() * args.line_spacing;
-            let max_w_em = max_width_em.unwrap_or(f32::MAX).max(0.0);
-            let lines = break_lines(&self.font, content, max_w_em);
-            let block_width_em = if let Some(w_em) = max_width_em {
-                w_em
-            } else {
-                lines.iter().map(|l| l.advance).fold(0.0f32, f32::max)
-            };
-            let shape = layout_lines_to_cache(
-                &self.font,
-                &mut self.glyph_cache,
-                &lines,
-                line_height_em,
-                block_width_em,
-                fc,
-            );
-            self.shape_cache.insert(key, shape);
+        match self.shape_cache.entry(key) {
+            Entry::Occupied(mut e) => {
+                e.get_mut().last_used_frame = fc;
+            }
+            Entry::Vacant(e) => {
+                let max_width_em = args.max_width_px.map(|w| w / size_px);
+                let metrics = self.font.metrics();
+                let line_height_em = metrics.line_height() * args.line_spacing;
+                let max_w_em = max_width_em.unwrap_or(f32::MAX).max(0.0);
+                let lines = break_lines(&self.font, content, max_w_em);
+                let block_width_em = if let Some(w_em) = max_width_em {
+                    w_em
+                } else {
+                    lines.iter().map(|l| l.advance).fold(0.0f32, f32::max)
+                };
+                let cached = layout_lines_to_cache(
+                    &self.font,
+                    &mut self.glyph_cache,
+                    &lines,
+                    line_height_em,
+                    block_width_em,
+                    fc,
+                );
+                e.insert(cached);
+            }
         }
-
-        if let Some(shape) = self.shape_cache.get_mut(&key) {
-            shape.last_used_frame = fc;
-        }
-
-        key
     }
 
     pub fn load(font_path: &str) -> Result<Self, String> {
@@ -197,14 +199,7 @@ impl TextEngine {
             frame: Vec::new(),
             vertex_scratch: Vec::new(),
             frame_counter: 0,
-            layout_anchor: [0.0, 0.0],
         }
-    }
-
-    /// Pixel translation baked into vertex emission during `flush`.
-    /// Match `Mat4::from_translation(Vec3::new(ax, ay, 0.0)) * scale(...)`.
-    pub fn set_layout_anchor(&mut self, ax: f32, ay: f32) {
-        self.layout_anchor = [ax, ay];
     }
 
     pub fn metrics(&self) -> FontMetrics {
@@ -215,13 +210,39 @@ impl TextEngine {
         self.font.units_per_em()
     }
 
-    pub fn glyph_cache(&self) -> &GlyphCache {
-        &self.glyph_cache
+    /// Curve atlas dimensions `(width, height)` for debugging / diagnostics.
+    pub fn curve_atlas_size(&self) -> (u32, u32) {
+        self.glyph_cache.curve_size()
+    }
+
+    /// Band atlas dimensions `(width, height)` for debugging / diagnostics.
+    pub fn band_atlas_size(&self) -> (u32, u32) {
+        self.glyph_cache.band_size()
+    }
+
+    pub fn new_atlas(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+    ) -> TextAtlas {
+        TextAtlas::new(device, queue, layout, &self.glyph_cache)
+    }
+
+    pub fn sync_atlas(
+        &self,
+        atlas: &mut TextAtlas,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+    ) {
+        TextAtlas::sync(atlas, device, queue, layout, &self.glyph_cache);
     }
 
     pub fn measure(&mut self, content: &str, args: &TextArgs) -> Measured {
-        let key = self.ensure_cached_shape(content, args);
-        let shape = self.shape_cache.get(&key).expect("cached");
+        self.ensure_cached_shape(content, args);
+        let key = make_shape_key(content, args);
+        let shape = self.shape_cache.get(&key).expect("cached shape");
         let w_px = shape.block_width_em * args.size_px;
         let h_px = shape.line_count as f32 * shape.line_height_em * args.size_px;
         Measured {
@@ -232,11 +253,12 @@ impl TextEngine {
     }
 
     pub fn text(&mut self, x: f32, y: f32, content: &str, args: &TextArgs) -> &mut [PushedGlyph] {
-        let key = self.ensure_cached_shape(content, args);
+        self.ensure_cached_shape(content, args);
+        let key = make_shape_key(content, args);
         let size_px = args.size_px.max(0.0001);
 
         let (glyphs, line_breaks, line_advances, block_w) = {
-            let shape = self.shape_cache.get(&key).expect("cached");
+            let shape = self.shape_cache.get(&key).expect("cached shape");
             (
                 shape.glyphs.as_slice(),
                 shape.line_breaks.as_slice(),
@@ -268,17 +290,15 @@ impl TextEngine {
     }
 
     pub fn flush(&mut self) -> &[TextVertex] {
-        let [ax, ay] = self.layout_anchor;
         self.vertex_scratch.clear();
 
         for g in &self.frame {
-            let pen_em_x = (g.x - ax) / g.size_px;
-            let pen_em_y = (ay - g.y) / g.size_px;
-            push_glyph_vertices(
+            push_glyph_quad_pixels(
                 &mut self.vertex_scratch,
                 &g.info,
-                pen_em_x,
-                pen_em_y,
+                g.x,
+                g.y,
+                g.size_px,
                 g.color,
             );
         }

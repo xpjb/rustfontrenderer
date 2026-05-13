@@ -4,9 +4,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytemuck::cast_slice;
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Mat4, Vec2};
 use pollster::block_on;
-use text::{Align, TextArgs, TextAtlas, TextEngine, TextRenderer, TextVertex};
+use text::{Align, TextArgs, TextEngine, TextRenderer, TextVertex};
 use winit::{
     event::{ElementState, Event, KeyEvent, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -84,7 +84,6 @@ async fn run() {
         line_spacing: LINE_SPACING,
         align: Align::Left,
     };
-    engine.set_layout_anchor(0.0, 0.0);
     engine.text(0.0, 0.0, OVERLAY_GLYPH_WARMUP, &warmup_args);
     let _ = engine.flush();
 
@@ -140,7 +139,7 @@ async fn run() {
     surface.configure(&device, &config);
 
     let renderer = TextRenderer::new(&device, &config);
-    let mut atlas = TextAtlas::new(&device, &queue, &renderer.atlas_layout, engine.glyph_cache());
+    let mut atlas = engine.new_atlas(&device, &queue, &renderer.atlas_layout);
     let mut vbuf = DynamicVertexBuffer::new(&device, 4096);
 
     let mut flyer_count = INITIAL_FLYER_COUNT;
@@ -237,8 +236,6 @@ async fn run() {
 
                         let mut frame_scopes = Vec::with_capacity(6);
 
-                        engine.set_layout_anchor(0.0, world.baseline_origin_px);
-
                         timed_scope_ms!("flyers", frame_scopes, {
                             for flyer in &flyers {
                                 let entry = phrase_bank.entry(flyer.phrase_index);
@@ -266,7 +263,7 @@ async fn run() {
                         }
                         overlay.emit(&mut engine, &world, line_height_em);
                         timed_scope_ms!("atlas_sync", frame_scopes, {
-                            atlas.sync(&device, &queue, &renderer.atlas_layout, engine.glyph_cache());
+                            engine.sync_atlas(&mut atlas, &device, &queue, &renderer.atlas_layout);
                         });
 
                         let verts = timed_scope_ms!("flush", frame_scopes, {
@@ -282,7 +279,7 @@ async fn run() {
                         let view = frame.texture.create_view(&Default::default());
                         let mut encoder = device.create_command_encoder(&Default::default());
 
-                        let proj = Mat4::orthographic_rh(
+                        let matrix = Mat4::orthographic_rh(
                             0.0,
                             cur.width as f32,
                             cur.height as f32,
@@ -290,9 +287,6 @@ async fn run() {
                             -1.0,
                             1.0,
                         );
-                        let model = Mat4::from_translation(Vec3::new(0.0, world.baseline_origin_px, 0.0))
-                            * Mat4::from_scale(Vec3::new(font_size, -font_size, 1.0));
-                        let matrix = proj * model;
 
                         timed_scope_ms!("encode_render", frame_scopes, {
                             renderer.render(

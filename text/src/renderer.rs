@@ -30,7 +30,7 @@ pub struct TextAtlas {
 }
 
 impl TextAtlas {
-    pub fn new(
+    pub(crate) fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
@@ -65,7 +65,7 @@ impl TextAtlas {
         atlas
     }
 
-    pub fn sync(
+    pub(crate) fn sync(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,

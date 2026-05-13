@@ -1,6 +1,5 @@
 //! Text shaping and layout. Wraps rustybuzz to produce a flat list of `ShapedGlyph`
-//! entries with per-glyph metrics (em-space advance, width, bbox), then groups them
-//! into a `ShapedRun` ready for rendering.
+//! entries, then groups them into a `ShapedRun`.
 
 use rustybuzz::{shape, UnicodeBuffer};
 use ttf_parser::GlyphId;
@@ -9,29 +8,19 @@ use crate::bands::{process_bands_with, BandsScratch};
 use crate::cache::{GlyphCache, GlyphInfo};
 use crate::font::Font;
 
-/// One positioned glyph along a baseline. `x`/`y` are em-space pen positions
-/// (glyph origin); `advance`/`width` are em-space metrics useful for layout.
+/// One positioned glyph along a baseline (`x`/`y` are em-space pen positions).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ShapedGlyph {
     pub glyph_id: u32,
-    pub cluster: u32,
     pub x: f32,
     pub y: f32,
-    pub x_advance: f32,
-    pub y_advance: f32,
-    /// Bounding-box width in em-space (max_x - min_x).
-    pub width: f32,
     pub info: GlyphInfo,
 }
 
-/// A shaped, cached run of glyphs along a single baseline starting at (`origin_x`, `origin_y`).
+/// A shaped run of glyphs along a single baseline.
 #[derive(Clone, Debug)]
 pub(crate) struct ShapedRun {
     pub glyphs: Vec<ShapedGlyph>,
-    pub origin_x: f32,
-    pub origin_y: f32,
-    /// Total em-space advance summed across the run.
-    pub total_advance: f32,
 }
 
 /// Shape `text` with the given font, ensuring all glyphs are populated in `cache`.
@@ -72,15 +61,10 @@ pub(crate) fn shape_text(
         });
 
         if let Some(gi) = cached {
-            let width = (gi.bbox.2 - gi.bbox.0).max(0.0);
             glyphs.push(ShapedGlyph {
                 glyph_id,
-                cluster: info.cluster,
                 x: gx,
                 y: gy,
-                x_advance: x_adv,
-                y_advance: y_adv,
-                width,
                 info: gi,
             });
         }
@@ -89,10 +73,5 @@ pub(crate) fn shape_text(
         y += y_adv;
     }
 
-    ShapedRun {
-        glyphs,
-        origin_x: start_x,
-        origin_y: start_y,
-        total_advance: x - start_x,
-    }
+    ShapedRun { glyphs }
 }

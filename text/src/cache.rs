@@ -12,7 +12,7 @@ pub(crate) struct GlyphInfo {
     pub bbox: (f32, f32, f32, f32),
 }
 
-pub struct GlyphCache {
+pub(crate) struct GlyphCache {
     curve_texels: Vec<[u16; 4]>,
     band_texels: Vec<[u16; 2]>,
     curve_width: u32,

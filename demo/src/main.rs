@@ -6,9 +6,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use glam::{Mat4, Vec3};
+use glam::Mat4;
 use pollster::block_on;
-use text::{Align, TextArgs, TextAtlas, TextEngine, TextRenderer};
+use text::{Align, TextArgs, TextEngine, TextRenderer};
 use winit::{
     event::{ElementState, Event, KeyEvent, WindowEvent},
     event_loop::EventLoop,
@@ -56,8 +56,8 @@ async fn run() {
     );
     println!(
         "Cache: curve tex {:?}; band tex {:?}",
-        engine.glyph_cache().curve_size(),
-        engine.glyph_cache().band_size()
+        engine.curve_atlas_size(),
+        engine.band_atlas_size()
     );
 
     let event_loop = EventLoop::new().unwrap();
@@ -99,7 +99,7 @@ async fn run() {
     surface.configure(&device, &config);
 
     let renderer = TextRenderer::new(&device, &config);
-    let mut atlas = TextAtlas::new(&device, &queue, &renderer.atlas_layout, engine.glyph_cache());
+    let mut atlas = engine.new_atlas(&device, &queue, &renderer.atlas_layout);
 
     window.request_redraw();
 
@@ -126,7 +126,6 @@ async fn run() {
                     }
 
                     let baseline_y = MARGIN + metrics.ascent * FONT_SIZE;
-                    engine.set_layout_anchor(MARGIN, baseline_y);
 
                     let args = TextArgs {
                         size_px: FONT_SIZE,
@@ -137,7 +136,7 @@ async fn run() {
                     };
                     engine.text(MARGIN, baseline_y, SAMPLE, &args);
 
-                    atlas.sync(&device, &queue, &renderer.atlas_layout, engine.glyph_cache());
+                    engine.sync_atlas(&mut atlas, &device, &queue, &renderer.atlas_layout);
 
                     let verts = engine.flush();
                     let vbuf = TextRenderer::build_vertices(&device, verts);
@@ -149,12 +148,9 @@ async fn run() {
                     let view = frame.texture.create_view(&Default::default());
                     let mut encoder = device.create_command_encoder(&Default::default());
 
-                    let proj = Mat4::orthographic_rh(
+                    let matrix = Mat4::orthographic_rh(
                         0.0, cur.width as f32, cur.height as f32, 0.0, -1.0, 1.0,
                     );
-                    let model = Mat4::from_translation(Vec3::new(MARGIN, baseline_y, 0.0))
-                        * Mat4::from_scale(Vec3::new(FONT_SIZE, -FONT_SIZE, 1.0));
-                    let matrix = proj * model;
 
                     let bg = wgpu::Color { r: 0.95, g: 0.95, b: 0.97, a: 1.0 };
                     renderer.render(

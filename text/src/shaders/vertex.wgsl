@@ -10,7 +10,7 @@ struct Params {
 struct VsIn {
     @location(0) pos: vec2f,
     @location(1) glyph: vec2u,
-    @location(2) jac: vec2f,
+    @location(2) loc_em: vec2f,
     @location(3) bnd: vec4f,
     @location(4) col: vec4f,
 }
@@ -27,8 +27,8 @@ struct VsOut {
 fn main(input: VsIn) -> VsOut {
     var out: VsOut;
 
-    // Glyph-local sample coord for curve lookup (curves stored per-glyph in local em-space).
-    out.texcoord = vec2f(input.pos.x - input.jac.x, input.pos.y - input.jac.y);
+    // Slug coverage expects glyph-local em coords; curve atlas is stored in em-space.
+    out.texcoord = input.loc_em;
     out.position = params.matrix * vec4f(input.pos.x, input.pos.y, 0.0, 1.0);
 
     out.glyph = vec4i(

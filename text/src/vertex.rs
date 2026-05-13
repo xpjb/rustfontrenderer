@@ -1,8 +1,8 @@
 //! Vertex format and quad generation for text rendering.
 //!
-//! Each glyph emits 6 vertices (two triangles) in em-space; the vertex shader
-//! transforms by the caller's matrix. Per-vertex attributes carry packed glyph
-//! cache locations so the pixel shader can fetch curve and band data.
+//! `pos` is in window pixels (`0..width`, `0..height`). `loc_em` stays in glyph-local
+//! em coordinates for the Slug fragment shader (curve atlas is em-space). Y matches the
+//! old `scale(_, -font_size, _)` convention via `pen_y - ey * size`.
 
 use bytemuck::{Pod, Zeroable};
 
@@ -12,68 +12,59 @@ use crate::cache::GlyphInfo;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct TextVertex {
-    /// em-space corner.
+    /// Window-space pixel position (matches orthographic `0..width`, `0..height`).
     pub pos: [f32; 2],
     /// Packed glyph metadata: band start and band max.
     pub glyph: [u32; 2],
-    /// Glyph origin in em-space, used to derive glyph-local sample coord.
-    pub jac: [f32; 2],
-    /// bnd = (band_scale_x, band_scale_y, band_offset_x, band_offset_y).
+    /// Glyph-local em-space offset from the pen (Slug sampling coord).
+    pub loc_em: [f32; 2],
+    /// bnd = (band_scale_x, band_scale_y, band_offset_x, band_offset_y) in em-space.
     pub bnd: [f32; 4],
     /// col = RGBA.
     pub col: [f32; 4],
 }
 
-pub(crate) fn push_glyph_vertices(
+pub(crate) fn push_glyph_quad_pixels(
     out: &mut Vec<TextVertex>,
     info: &GlyphInfo,
-    pen_em_x: f32,
-    pen_em_y: f32,
+    pen_x: f32,
+    pen_y: f32,
+    size: f32,
     color: [f32; 4],
 ) {
-    out.extend_from_slice(&glyph_quad(info, pen_em_x, pen_em_y, color));
+    out.extend_from_slice(&glyph_quad_pixels(info, pen_x, pen_y, size, color));
 }
 
-fn glyph_quad(info: &GlyphInfo, px: f32, py: f32, color: [f32; 4]) -> [TextVertex; 6] {
+fn glyph_quad_pixels(
+    info: &GlyphInfo,
+    pen_x: f32,
+    pen_y: f32,
+    size: f32,
+    color: [f32; 4],
+) -> [TextVertex; 6] {
     let (min_x, min_y, max_x, max_y) = info.bbox;
-    let (bx, by) = (px + min_x, py + min_y);
-    let (bw, bh) = (max_x - min_x, max_y - min_y);
-
-    let num_bands_x = info.band_max.0 + 1;
-    let num_bands_y = info.band_max.1 + 1;
-    let scale_x = if bw > 0.0001 { num_bands_x as f32 / bw } else { 1.0 };
-    let scale_y = if bh > 0.0001 { num_bands_y as f32 / bh } else { 1.0 };
-    let off_x = -min_x * scale_x;
-    let off_y = -min_y * scale_y;
-
-    let gx = info.band_start.0 as u32;
-    let gy = info.band_start.1 as u32;
+    let bw = max_x - min_x;
+    let bh = max_y - min_y;
+    let scale_x = if bw > 0.0001 { (info.band_max.0 + 1) as f32 / bw } else { 1.0 };
+    let scale_y = if bh > 0.0001 { (info.band_max.1 + 1) as f32 / bh } else { 1.0 };
+    let bnd = [scale_x, scale_y, -min_x * scale_x, -min_y * scale_y];
     let glyph = [
-        (gy << 16) | gx,
+        ((info.band_start.1 as u32) << 16) | info.band_start.0 as u32,
         ((info.band_max.1 & 0xFF) << 16) | (info.band_max.0 & 0xFF),
     ];
-
-    let jac = [px, py];
-    let bnd = [scale_x, scale_y, off_x, off_y];
-
-    let corners = [
-        (bx, by),
-        (bx + bw, by),
-        (bx + bw, by + bh),
-        (bx, by),
-        (bx + bw, by + bh),
-        (bx, by + bh),
-    ];
-
-    let mut out = [TextVertex { pos: [0.0; 2], glyph, jac, bnd, col: color }; 6];
-    for (i, (cx, cy)) in corners.iter().enumerate() {
-        out[i] = TextVertex {
-            pos: [*cx, *cy],
-            glyph,
-            jac,
-            bnd,
-            col: color,
-        };
-    }
-    out
+    let v = |ex, ey| TextVertex {
+        pos: [pen_x + ex * size, pen_y - ey * size],
+        glyph,
+        loc_em: [ex, ey],
+        bnd,
+        col: color,
+    };
+    [
+        v(min_x, min_y),
+        v(max_x, min_y),
+        v(max_x, max_y),
+        v(min_x, min_y),
+        v(max_x, max_y),
+        v(min_x, max_y),
+    ]
 }
