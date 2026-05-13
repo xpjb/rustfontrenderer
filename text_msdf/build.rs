@@ -3,6 +3,9 @@
 //! deleting that folder (`rm -rf .text_msdf_atlas`) without `cargo clean` across the workspace.
 //! MSDF raster uses pure-Rust [`fdsm`] + [`fdsm_ttf_parser`] (avoids `msdfgen-sys` on Windows).
 
+#[path = "build_materials.rs"]
+mod build_materials;
+
 #[path = "src/atlas_format.rs"]
 mod atlas_format;
 
@@ -20,7 +23,7 @@ use fdsm::transform::Transform;
 use fdsm_ttf_parser::load_shape_from_face;
 use image::{ImageBuffer, Rgba};
 use nalgebra::{convert, Affine2, Point2, Similarity2, Vector2};
-use rustybuzz::{shape, script, Direction, Feature, Face as HbFace, UnicodeBuffer};
+use rustybuzz::{shape, script, Direction, Face as HbFace, Feature, UnicodeBuffer};
 use serde::{Deserialize, Serialize};
 use ttf_parser::{Face, GlyphId, Rect, Tag};
 
@@ -41,8 +44,9 @@ struct Manifest {
 
 fn main() {
     println!("cargo:rerun-if-changed=charset.txt");
-    println!("cargo:rerun-if-changed=../assets/NotoSansSC-Regular.ttf");
+    println!("cargo:rerun-if-changed=../assets/Hack-Regular.ttf");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src/shaders/pixel.wgsl");
 
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let workspace_root = manifest_dir.join("..");
@@ -55,8 +59,10 @@ fn main() {
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR from Cargo"));
     fs::create_dir_all(&out_dir).expect("OUT_DIR");
 
+    build_materials::run(&manifest_dir, &out_dir);
+
     let charset_path = manifest_dir.join("charset.txt");
-    let font_path = manifest_dir.join("../assets/NotoSansSC-Regular.ttf");
+    let font_path = manifest_dir.join("../assets/Hack-Regular.ttf");
 
     let charset_src = fs::read_to_string(&charset_path).expect("charset.txt");
     let chars = parse_charset(&charset_src);
@@ -356,14 +362,17 @@ fn flip_mtsdf_rows_top_for_font_up(img: &mut ImageBuffer<Rgba<f32>, Vec<f32>>) {
     }
 }
 
-/// Glyph IDs HarfBuzz produces for single-codepoint runs under the same features as `layout.rs`.
-/// Noto Sans SC applies GSUB to ASCII digits (no Unicode cmap entry for those variant glyphs).
+fn rustybuzz_shape_features() -> [Feature; 2] {
+    [
+        Feature::new(Tag::from_bytes(b"liga"), 0, ..),
+        Feature::new(Tag::from_bytes(b"clig"), 0, ..),
+    ]
+}
+
+/// Extra glyph IDs produced by HarfBuzz for `charset.txt` codepoints (same settings as `layout.rs`).
 fn collect_shaped_glyph_ids(font_bytes: &[u8], chars: &[char]) -> BTreeSet<u32> {
     let hb_face = HbFace::from_slice(font_bytes, 0).expect("rustybuzz parse font");
-    let features = [
-        Feature::new(Tag::from_bytes(b"fwid"), 0, ..),
-        Feature::new(Tag::from_bytes(b"halt"), 0, ..),
-    ];
+    let feats = rustybuzz_shape_features();
     let mut out = BTreeSet::new();
     for &ch in chars {
         let mut ub = UnicodeBuffer::new();
@@ -372,7 +381,7 @@ fn collect_shaped_glyph_ids(font_bytes: &[u8], chars: &[char]) -> BTreeSet<u32> 
         ub.set_direction(Direction::LeftToRight);
         ub.set_script(script::LATIN);
         ub.set_language("en".parse().expect("language tag"));
-        let gb = shape(&hb_face, &features, ub);
+        let gb = shape(&hb_face, &feats, ub);
         for info in gb.glyph_infos() {
             out.insert(info.glyph_id);
         }

@@ -180,11 +180,13 @@ of scope here.
 
 WGSL terminology refresher for clarity:
 
-| Mechanism | Granularity | Right for |
-|---|---|---|
-| `var<uniform>` (UBO) | Per-draw | Globals shared by every glyph |
-| `var<storage>` | Per-anything | Big or shared per-glyph data |
-| Vertex attribute | Per-vertex (per-glyph in our use) | Material params |
+
+| Mechanism            | Granularity                       | Right for                     |
+| -------------------- | --------------------------------- | ----------------------------- |
+| `var<uniform>` (UBO) | Per-draw                          | Globals shared by every glyph |
+| `var<storage>`       | Per-anything                      | Big or shared per-glyph data  |
+| Vertex attribute     | Per-vertex (per-glyph in our use) | Material params               |
+
 
 For materials: **per-glyph params go in vertex attributes**, not in any
 uniform binding. Reason: mixing outlined and filled glyphs *in one draw
@@ -214,14 +216,14 @@ Phase 2 adds:
 1. `cargo:rerun-if-changed=materials/`
 2. Walk `materials/*.wgsl`. For each: parse the `//!` TOML header.
 3. Validate: param byte-size ≤ 32; param identifiers unique; WGSL function
-   name matches expected pattern.
+  name matches expected pattern.
 4. Generate `src/generated/materials.rs` with the enum and `pack()` impl.
 5. Generate `src/generated/ubershader_dispatch.wgsl` by concatenating each
-   material's body and emitting the switch.
+  material's body and emitting the switch.
 6. Substitute `{{include generated/ubershader_dispatch.wgsl}}` into a
-   copy of `pixel.wgsl` written to `src/generated/pixel.wgsl`.
+  copy of `pixel.wgsl` written to `src/generated/pixel.wgsl`.
 7. Run `naga` on the generated pixel shader. Fail the build with a
-   readable error if WGSL is invalid. (This catches typos in material
+  readable error if WGSL is invalid. (This catches typos in material
    snippets at compile time, not first frame.)
 
 ```toml
@@ -279,10 +281,10 @@ The `text` crate has the same `TextArgs.material` field for source
 compatibility, but only `Material::Fill` works. Other variants:
 
 - `Material::Outline` — could be supported via a second pass with inflated
-  geometry; defer until anyone asks.
+geometry; defer until anyone asks.
 - `Material::Glow` / `Material::Shadow` — physically not possible with
-  coverage (Slug computes coverage, not distance). `flush()` emits the
-  glyph as `Fill` and logs a warning once per material.
+coverage (Slug computes coverage, not distance). `flush()` emits the
+glyph as `Fill` and logs a warning once per material.
 
 This keeps the surface identical between crates but honest about what each
 backend supports.
@@ -295,16 +297,17 @@ backend supports.
 4. `Material` enum + `TextArgs.material` + `PushedGlyph.material`.
 5. Pixel shader rewritten to dispatch.
 6. Torture extended: per-style toggle (`F1` cycle Fill / Outline / Glow /
-   Shadow), `[`/`]` to sweep the primary param.
+  Shadow), `[`/`]` to sweep the primary param.
 
 ## Verification
 
 1. Single-fill output identical to phase 1 (regression check).
 2. Outline visible and correctly anti-aliased at sizes 16–240 px.
 3. Glow looks right with `radius_px = 2, 4, 8` — falloff smooth, no
-   median-of-three artifacts visible far from the edge (if there are, the
+  median-of-three artifacts visible far from the edge (if there are, the
    answer is to switch atlas channel from MSDF to MTSDF and read the alpha
    channel for glow; document this as the upgrade path).
 4. Adding a new material file in `materials/` triggers a rebuild and the
-   enum picks up the new variant.
+  enum picks up the new variant.
 5. `naga` rejects a deliberately-broken material file with a useful error.
+

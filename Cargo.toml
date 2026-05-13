@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["text", "demo", "torture", "torture_msdf", "text_msdf"]
+members = ["text", "demo", "demo_msdf", "torture", "torture_msdf", "text_msdf"]
 
 [workspace.dependencies]
 wgpu = "0.20"

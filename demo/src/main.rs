@@ -1,4 +1,4 @@
-//! Demo: loads NotoSansSC, wraps a paragraph to a fixed width, and renders it
+//! Demo: loads Hack, wraps a paragraph to a fixed width, and renders it
 //! as solid-filled text with the Slug coverage shader.
 //!
 //! Keys: Esc quit.
@@ -26,7 +26,7 @@ const SAMPLE: &str = "The quick brown fox jumps over the lazy dog. \
 Slug renders glyphs directly from quadratic Bezier curves on the GPU, \
 using horizontal and vertical bands to make per-pixel coverage cheap. \
 This paragraph is wrapped to a fixed pixel width by a naive whitespace \
-line breaker â€” no kerning across the break, no Unicode rules, just words.";
+line breaker -- no kerning across the break, no Unicode rules, just words.";
 
 fn main() {
     block_on(run());
@@ -34,7 +34,7 @@ fn main() {
 
 async fn run() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let font_path = manifest_dir.join("..").join("assets").join("NotoSansSC-Regular.ttf");
+    let font_path = manifest_dir.join("..").join("assets").join("Hack-Regular.ttf");
     let mut engine = TextEngine::load(font_path.to_str().unwrap()).expect("load font");
 
     let column_w_px = WINDOW_W as f32 - MARGIN * 2.0;

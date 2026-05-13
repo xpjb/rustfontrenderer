@@ -167,7 +167,9 @@ impl TextRenderer {
         });
         let frag = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("text_msdf fs"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/pixel.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!(concat!(env!("OUT_DIR"), "/pixel_full.wgsl")).into(),
+            ),
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -190,6 +192,21 @@ impl TextRenderer {
             wgpu::VertexAttribute {
                 offset: 16,
                 shader_location: 2,
+                format: wgpu::VertexFormat::Float32x4,
+            },
+            wgpu::VertexAttribute {
+                offset: 32,
+                shader_location: 3,
+                format: wgpu::VertexFormat::Uint32,
+            },
+            wgpu::VertexAttribute {
+                offset: 48,
+                shader_location: 4,
+                format: wgpu::VertexFormat::Float32x4,
+            },
+            wgpu::VertexAttribute {
+                offset: 64,
+                shader_location: 5,
                 format: wgpu::VertexFormat::Float32x4,
             },
         ];

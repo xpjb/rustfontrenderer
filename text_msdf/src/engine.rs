@@ -10,6 +10,7 @@ use crate::layout::{fallback_glyph_record, shape_text, ShapedGlyph};
 use crate::linebreak::{break_lines, Line};
 use crate::renderer::TextAtlas;
 use crate::vertex::{glyph_quad_is_visible, push_glyph_quad_pixels, TextVertex};
+use crate::Material;
 
 const SHAPE_CACHE_TTL_FRAMES: u64 = 60;
 
@@ -39,6 +40,7 @@ pub struct TextArgs {
     pub max_width_px: Option<f32>,
     pub line_spacing: f32,
     pub align: Align,
+    pub material: Material,
 }
 
 impl Default for TextArgs {
@@ -49,6 +51,7 @@ impl Default for TextArgs {
             max_width_px: None,
             line_spacing: 1.2,
             align: Align::Left,
+            material: Material::Fill,
         }
     }
 }
@@ -71,6 +74,7 @@ pub struct PushedGlyph {
     pub x: f32,
     pub y: f32,
     pub color: [f32; 4],
+    pub material: Material,
     pub(crate) atlas: GlyphRecord,
     size_px: f32,
 }
@@ -290,6 +294,7 @@ impl TextEngine {
                 x: px,
                 y: py,
                 color: args.color,
+                material: args.material,
                 atlas: g.atlas,
                 size_px,
             });
@@ -316,6 +321,7 @@ impl TextEngine {
                 g.y,
                 g.size_px,
                 g.color,
+                g.material,
             );
         }
 

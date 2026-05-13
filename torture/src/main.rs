@@ -70,7 +70,7 @@ fn main() {
 
 async fn run() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let font_path = manifest_dir.join("..").join("assets").join("NotoSansSC-Regular.ttf");
+    let font_path = manifest_dir.join("..").join("assets").join("Hack-Regular.ttf");
     let mut engine = TextEngine::load(font_path.to_str().unwrap()).expect("load font");
     let metrics = engine.metrics();
     let line_height_em = metrics.line_height() * LINE_SPACING;

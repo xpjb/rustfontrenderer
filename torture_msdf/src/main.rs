@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use bytemuck::cast_slice;
 use glam::{Mat4, Vec2};
 use pollster::block_on;
-use text_msdf::{Align, TextArgs, TextEngine, TextRenderer, TextVertex};
+use text_msdf::{Align, Material, TextArgs, TextEngine, TextRenderer, TextVertex};
 use winit::{
     event::{ElementState, Event, KeyEvent, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -37,6 +37,7 @@ const MAX_FLYERS: usize = 10000;
 const STATS_REFRESH: Duration = Duration::from_millis(200);
 const STATS_HISTORY: usize = 720;
 const PERF_PRINT_INTERVAL: Duration = Duration::from_secs(1);
+
 const BACKGROUND: wgpu::Color = wgpu::Color {
     r: 0.035,
     g: 0.040,
@@ -70,7 +71,7 @@ fn main() {
 
 async fn run() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let font_path = manifest_dir.join("..").join("assets").join("NotoSansSC-Regular.ttf");
+    let font_path = manifest_dir.join("..").join("assets").join("Hack-Regular.ttf");
     let mut engine = TextEngine::load(font_path.to_str().unwrap()).expect("load font");
     let metrics = engine.metrics();
     let line_height_em = metrics.line_height() * LINE_SPACING;
@@ -83,6 +84,7 @@ async fn run() {
         max_width_px: None,
         line_spacing: LINE_SPACING,
         align: Align::Left,
+        material: Material::Fill,
     };
     engine.text(0.0, 0.0, OVERLAY_GLYPH_WARMUP, &warmup_args);
     let _ = engine.flush();
@@ -90,7 +92,7 @@ async fn run() {
     let event_loop = EventLoop::new().unwrap();
     let window = Arc::new(
         WindowBuilder::new()
-            .with_title("rustfontrenderer torture (Esc quit, Up/Down density, +/- size)")
+            .with_title("torture_msdf (Esc quit, Up/Down density, +/- size)")
             .with_inner_size(winit::dpi::PhysicalSize::new(WINDOW_W, WINDOW_H))
             .build(&event_loop)
             .unwrap(),
@@ -363,6 +365,7 @@ impl PhraseBank {
             max_width_px: None,
             line_spacing: LINE_SPACING,
             align: Align::Left,
+            material: Material::Fill,
         };
         let template_args = TextArgs {
             size_px: INITIAL_FONT_SIZE,
@@ -370,6 +373,7 @@ impl PhraseBank {
             max_width_px: None,
             line_spacing: LINE_SPACING,
             align: Align::Left,
+            material: Material::Fill,
         };
         let mut entries = Vec::with_capacity(PHRASES.len());
         for phrase in PHRASES {
@@ -695,6 +699,7 @@ impl StatsOverlay {
             max_width_px: None,
             line_spacing: LINE_SPACING,
             align: Align::Left,
+            material: Material::Fill,
         };
 
         for (i, line) in self.hud_lines.iter().enumerate() {
@@ -710,6 +715,7 @@ impl StatsOverlay {
             max_width_px: None,
             line_spacing: LINE_SPACING,
             align: Align::Left,
+            material: Material::Fill,
         };
         engine.text(padding_left_px, footer_baseline_px, self.footer.as_str(), &footer_args);
     }

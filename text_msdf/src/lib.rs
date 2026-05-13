@@ -1,5 +1,7 @@
 //! MSDF text renderer — mirrors `text` crate exports.
 
+include!(concat!(env!("OUT_DIR"), "/materials_codegen.rs"));
+
 mod atlas;
 mod atlas_format;
 mod engine;

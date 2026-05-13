@@ -2,14 +2,19 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rustybuzz::{
-    shape, Direction, Feature, UnicodeBuffer,
-    script,
-};
+use rustybuzz::{shape, Direction, Feature, UnicodeBuffer, script};
 use ttf_parser::Tag;
 
 use crate::atlas_format::GlyphRecord;
 use crate::font::Font;
+
+fn rustybuzz_shape_features() -> [Feature; 2] {
+    // Atlas only bakes cmap glyphs. Ligature substitutions use GSUB GIDs without cmap entries.
+    [
+        Feature::new(Tag::from_bytes(b"liga"), 0, ..),
+        Feature::new(Tag::from_bytes(b"clig"), 0, ..),
+    ]
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ShapedGlyph {
@@ -40,11 +45,8 @@ pub(crate) fn shape_text(
     buffer.set_direction(Direction::LeftToRight);
     buffer.set_script(script::LATIN);
     buffer.set_language("en".parse().expect("language tag"));
-    let features = [
-        Feature::new(Tag::from_bytes(b"fwid"), 0, ..),
-        Feature::new(Tag::from_bytes(b"halt"), 0, ..),
-    ];
-    let glyph_buffer = shape(font.face(), &features, buffer);
+
+    let glyph_buffer = shape(font.face(), &rustybuzz_shape_features(), buffer);
 
     let infos = glyph_buffer.glyph_infos();
     let positions = glyph_buffer.glyph_positions();

@@ -1,8 +1,9 @@
-//! Vertex format for MSDF text (pixel pos + atlas UV + color).
+//! Vertex format for MSDF text (pixel pos + atlas UV + color + material).
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::atlas_format::GlyphRecord;
+use crate::Material;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -10,6 +11,11 @@ pub struct TextVertex {
     pub pos: [f32; 2],
     pub uv: [f32; 2],
     pub color: [f32; 4],
+    pub mat_tag: u32,
+    /// Pad to 16-byte alignment before the two `vec4` param slots.
+    pub _pad_mat: [u32; 3],
+    pub mat_p0: [f32; 4],
+    pub mat_p1: [f32; 4],
 }
 
 pub(crate) fn glyph_quad_is_visible(record: &GlyphRecord) -> bool {
@@ -29,6 +35,7 @@ pub(crate) fn push_glyph_quad_pixels(
     pen_y: f32,
     size_px: f32,
     color: [f32; 4],
+    material: Material,
 ) {
     out.extend_from_slice(&glyph_quad_pixels(
         record,
@@ -38,6 +45,7 @@ pub(crate) fn push_glyph_quad_pixels(
         pen_y,
         size_px,
         color,
+        material,
     ));
 }
 
@@ -49,7 +57,10 @@ fn glyph_quad_pixels(
     pen_y: f32,
     size: f32,
     color: [f32; 4],
+    material: Material,
 ) -> [TextVertex; 6] {
+    let (tag, mat_p0, mat_p1) = material.pack_for_vertex();
+
     let min_x = record.plane_min_em[0];
     let min_y = record.plane_min_em[1];
     let max_x = record.plane_max_em[0];
@@ -77,6 +88,10 @@ fn glyph_quad_pixels(
         pos: [pen_x + ex * size, pen_y - ey * size],
         uv: uv_at(ex, ey),
         color,
+        mat_tag: tag,
+        _pad_mat: [0, 0, 0],
+        mat_p0,
+        mat_p1,
     };
 
     [

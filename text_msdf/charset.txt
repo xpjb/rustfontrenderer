@@ -1,8 +1,2 @@
-# ASCII printable + torture warmup / HUD
+# ASCII printable (space through ~). Extend ranges here if you need more codepoints in the atlas.
 0020-007E
-
-# Fullwidth ASCII (! through ~). NotoSansSC often substitutes these without Latn+fwid-off.
-FF01-FF5E
-
-# Latin ligatures at Unicode cmap slots — matches glyphs OT often substitutes from ascii pairs (fi, fl, …).
-FB00-FB06
