@@ -1,5 +1,10 @@
 // `px_meta.x` = baked atlas `distanceRange` (friend hardcodes `const MSDF_RANGE: f32 = 4.0` from JSON).
 // `screen_px_range` = `px_meta.x * (glyph_scale_px / em_to_px)` ≡ `MSDF_RANGE * (scale / 64.0)` when 64 is atlas em density.
+//
+// Extra scale on that product: **< 1** = shallower coverage ramp = **softer AA** (less “aggressive” edge).
+// **> 1** = sharper / narrower band. Does **not** add alpha-lerp rounding; it only scales the ramp steepness.
+// i would definitely delete this if its not found to be useful soon
+const MSDF_COVERAGE_RANGE_SCALE: f32 = 1.0;
 
 struct Globals {
     matrix: mat4x4<f32>,
@@ -42,7 +47,8 @@ fn main(in: FsIn) -> @location(0) vec4<f32> {
     let mp1 = in.mat_p1;
     let p = MaterialParams(mp0.x, mp0.y, mp0.z, mp0.w, mp1.x, mp1.y, mp1.z, mp1.w);
     let em_to_px = max(globals.px_meta.w, 1.0);
-    let screen_px_range = globals.px_meta.x * (in.glyph_scale_px / em_to_px);
+    let screen_px_range =
+        globals.px_meta.x * (in.glyph_scale_px / em_to_px) * MSDF_COVERAGE_RANGE_SCALE;
     let sd_tri = unpack_sd_normalized(s);
     return dispatch_material(
         in.mat_tag,
