@@ -29,7 +29,7 @@ impl EmbeddedAtlas {
     }
 
     pub fn distance_range_px(&self) -> f32 {
-        self.file.header.distance_range_px
+        self.file.header.sdf_px_range()
     }
 }
 

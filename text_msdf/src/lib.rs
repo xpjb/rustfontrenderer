@@ -8,6 +8,7 @@ mod engine;
 mod font;
 mod layout;
 mod linebreak;
+pub mod rect_pack;
 mod renderer;
 mod vertex;
 

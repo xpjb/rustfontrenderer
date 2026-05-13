@@ -88,6 +88,13 @@ fn measure_args(size_px: f32) -> TextArgs {
     }
 }
 
+/// Outline / glow thickness in **screen pixels** from an em-fraction of the text `font_size_px`.
+/// Floor keeps lines visible at very small sizes. Keep `em_fraction` ≤ `em_extra_radius` (0.125 here)
+/// so the effect stays inside the encoded sdf range.
+fn thickness_from_em(font_size_px: f32, em_fraction: f32) -> f32 {
+    (font_size_px * em_fraction).max(1.0)
+}
+
 fn row_title(engine: &mut TextEngine, lay: &FrameLayout, y: f32, title: &str) {
     let mut a = measure_args(lay.label_px);
     a.color = [0.72, 0.76, 0.84, 1.0];
@@ -235,39 +242,40 @@ async fn run() {
                             &mut engine,
                             &lay,
                             y,
-                            "[2] OUTLINE — width_px (cyan ring)",
+                            "[2] OUTLINE — em-relative width (cyan)",
                         );
                         y += lay.header_body_gap;
+                        let fp = lay.swatch_px;
                         place_swatches(
                             &mut engine,
                             &lay,
                             y,
                             &[
                                 (
-                                    "w=1",
+                                    "1/64 em",
                                     Material::Outline {
-                                        width_px: 1.0,
+                                        width_px: thickness_from_em(fp, 1.0 / 64.0),
                                         color: outline_c,
                                     },
                                 ),
                                 (
-                                    "w=2",
+                                    "1/32 em",
                                     Material::Outline {
-                                        width_px: 2.0,
+                                        width_px: thickness_from_em(fp, 1.0 / 32.0),
                                         color: outline_c,
                                     },
                                 ),
                                 (
-                                    "w=4",
+                                    "1/16 em",
                                     Material::Outline {
-                                        width_px: 4.0,
+                                        width_px: thickness_from_em(fp, 1.0 / 16.0),
                                         color: outline_c,
                                     },
                                 ),
                                 (
-                                    "w=8",
+                                    "1/12 em",
                                     Material::Outline {
-                                        width_px: 8.0,
+                                        width_px: thickness_from_em(fp, 1.0 / 12.0),
                                         color: outline_c,
                                     },
                                 ),
@@ -279,42 +287,43 @@ async fn run() {
                             &mut engine,
                             &lay,
                             y,
-                            "[3] GLOW — radius_px, strength",
+                            "[3] GLOW — em-relative radius, strength",
                         );
                         y += lay.header_body_gap;
+                        let fg = lay.swatch_px;
                         place_swatches(
                             &mut engine,
                             &lay,
                             y,
                             &[
                                 (
-                                    "r=2 s=0.5",
+                                    "r=1/48 em s=0.5",
                                     Material::Glow {
-                                        radius_px: 2.0,
+                                        radius_px: thickness_from_em(fg, 1.0 / 48.0),
                                         color: glow_c,
                                         strength: 0.5,
                                     },
                                 ),
                                 (
-                                    "r=4 s=1",
+                                    "r=1/32 em s=1",
                                     Material::Glow {
-                                        radius_px: 4.0,
+                                        radius_px: thickness_from_em(fg, 1.0 / 32.0),
                                         color: glow_c,
                                         strength: 1.0,
                                     },
                                 ),
                                 (
-                                    "r=8 s=1.5",
+                                    "r=1/24 em s=1.5",
                                     Material::Glow {
-                                        radius_px: 8.0,
+                                        radius_px: thickness_from_em(fg, 1.0 / 24.0),
                                         color: glow_c,
                                         strength: 1.5,
                                     },
                                 ),
                                 (
-                                    "r=12 s=2",
+                                    "r=1/16 em s=2",
                                     Material::Glow {
-                                        radius_px: 12.0,
+                                        radius_px: thickness_from_em(fg, 1.0 / 16.0),
                                         color: glow_c,
                                         strength: 2.0,
                                     },

@@ -9,6 +9,9 @@ mod build_materials;
 #[path = "src/atlas_format.rs"]
 mod atlas_format;
 
+#[path = "src/rect_pack.rs"]
+mod rect_pack;
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,29 +25,39 @@ use fdsm::shape::Shape;
 use fdsm::transform::Transform;
 use fdsm_ttf_parser::load_shape_from_face;
 use image::{ImageBuffer, Rgba};
-use nalgebra::{convert, Affine2, Point2, Similarity2, Vector2};
+use nalgebra::{convert, Affine2, Similarity2, Vector2};
+use rect_pack::{PackedRect, ShelfPacker};
 use rustybuzz::{shape, script, Direction, Face as HbFace, Feature, UnicodeBuffer};
 use serde::{Deserialize, Serialize};
 use ttf_parser::{Face, GlyphId, Rect, Tag};
 
-const GENERATOR_VERSION: &str = "msdf-phase1-v12-space-invisible-ssaa";
+const GENERATOR_VERSION: &str =
+    "msdf-phase1-v13-density-em-extra-radius-shelf-pack";
 /// Persists the baked atlas next to the repo root (sibling of `text_msdf/`) for easy cache clears.
 const WORKSPACE_ATLAS_CACHE_DIR: &str = ".text_msdf_atlas";
-const GLYPH_PX: u32 = 64;
-/// Atlas distance range in atlas pixels (this is `pxrange`; in em terms it's `range / GLYPH_PX`).
-/// Each atlas pixel beyond ±range/2 from the contour saturates to the byte extreme, so any
-/// material that does `clamp(sd + w + 0.5)` will paint a uniform rectangle wherever `w + 0.5`
-/// exceeds the encoded distance. To support outline width w / glow radius r cleanly at 1:1 render
-/// scale, need range ≥ 2(max(w, r) + 0.5). Currently 16 → safe up to ~7 px before partial leak.
-const DISTANCE_RANGE_PX: f64 = 16.0;
+/// Atlas sampling density `D` (constant texels span per **1 em**).
+const ATLAS_PX_PER_EM: u32 = 64;
+/// Half of MSDF encoded span (`R_em/2`): padding per atlas side equals this × [`ATLAS_PX_PER_EM`]
+/// texels. Total encoded sdf span (`pxrange` for fdsm/shader) is `2 * EM_EXTRA_RADIUS * D`.
+const EM_EXTRA_RADIUS: f64 = 0.125;
+
 const ATLAS_MAX_WIDTH: u32 = 2048;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Manifest {
     hash: String,
-    glyph_px: u32,
-    distance_range_px: f64,
+    em_to_px: u32,
+    em_extra_radius: f64,
     atlas_size: [u32; 2],
+}
+
+struct RasterGlyph {
+    pixels: Vec<u8>,
+    w: u32,
+    h: u32,
+    plane_min_em: [f32; 2],
+    plane_max_em: [f32; 2],
+    has_ink: bool,
 }
 
 fn main() {
@@ -76,15 +89,13 @@ fn main() {
     let font_bytes = fs::read(&font_path).expect("read font");
     let face = Face::parse(&font_bytes, 0).expect("parse font");
 
-    let glyph_px_f = GLYPH_PX as f64;
-    let cell = ((glyph_px_f + DISTANCE_RANGE_PX).ceil()) as u32;
-    let cols = ATLAS_MAX_WIDTH / cell;
+    let sdf_px_span = (2.0_f64 * EM_EXTRA_RADIUS * f64::from(ATLAS_PX_PER_EM)) as f32;
 
     let atlas_params = serde_json::json!({
-        "glyph_px": GLYPH_PX,
-        "distance_range_px": DISTANCE_RANGE_PX,
+        "em_to_px": ATLAS_PX_PER_EM,
+        "em_extra_radius": EM_EXTRA_RADIUS,
         "atlas_max_width": ATLAS_MAX_WIDTH,
-        "cell_px": cell,
+        "sdf_px_range": sdf_px_span,
         "generator": GENERATOR_VERSION,
     });
 
@@ -154,50 +165,89 @@ fn main() {
         );
     }
 
-    let n = resolved.len().max(1);
-    let rows = ((n as u32 + cols - 1) / cols).max(1);
-    let atlas_w = cols * cell;
-    let atlas_h = rows * cell;
-
-    let mut atlas_rgba = vec![0u8; (atlas_w * atlas_h * 4) as usize];
-
-    let mut glyphs: Vec<GlyphRecord> = Vec::with_capacity(resolved.len());
-
     let ec_cfg = ErrorCorrectionConfig::default();
 
-    for (i, &gid) in resolved.iter().enumerate() {
-        let col = (i as u32) % cols;
-        let row = (i as u32) / cols;
-        let ox = col * cell;
-        let oy = row * cell;
+    let mut baked: Vec<(GlyphId, RasterGlyph, f32)> = Vec::with_capacity(resolved.len());
+    let mut need_sentinel = false;
 
+    for &gid in &resolved {
         let advance_em = face
             .glyph_hor_advance(gid)
             .map(|a| a as f32 / upem)
             .unwrap_or(0.0);
+        let rg = raster_glyph_fdsm(&face, gid, &ec_cfg);
+        if !rg.has_ink {
+            need_sentinel = true;
+        }
+        baked.push((gid, rg, advance_em));
+    }
 
-        let (cell_rgba, gw, gh, plane_min, plane_max) =
-            raster_glyph_fdsm(&face, gid, cell, DISTANCE_RANGE_PX, &ec_cfg, upem);
+    let x_margin = u32::from(need_sentinel);
+    let mut pack_order: Vec<(usize, u32, u32)> = Vec::new();
+    for (i, (_, ref rg, _)) in baked.iter().enumerate() {
+        if rg.has_ink && rg.w > 0 && rg.h > 0 {
+            pack_order.push((i, rg.w, rg.h));
+        }
+    }
+    pack_order.sort_by(|a, b| b.2.cmp(&a.2));
 
-        blit_cell(&mut atlas_rgba, atlas_w, ox, oy, cell, &cell_rgba);
-
-        let (uv_min, uv_max) = if gw > 0 && gh > 0 {
-            let ix = (cell - gw) / 2;
-            let iy = (cell - gh) / 2;
-            (
-                [ox + ix, oy + iy],
-                [ox + ix + gw - 1, oy + iy + gh - 1],
+    let mut packer = ShelfPacker::with_x_margin(ATLAS_MAX_WIDTH, x_margin);
+    let mut placements: Vec<Option<PackedRect>> = vec![None; baked.len()];
+    for (idx, rw, rh) in pack_order {
+        let packed = packer.pack(rw, rh).unwrap_or_else(|| {
+            let gid = baked[idx].0;
+            panic!(
+                "glyph_id {} MSDF bake {}×{} does not fit shelf width {}",
+                gid.0 as u32,
+                rw,
+                rh,
+                ATLAS_MAX_WIDTH
             )
+        });
+        placements[idx] = Some(packed);
+    }
+
+    let (atlas_w, atlas_h) = packer.dimensions();
+    let mut atlas_rgba = vec![0u8; atlas_w as usize * atlas_h as usize * 4];
+    if need_sentinel {
+        for b in atlas_rgba.iter_mut().take(4) {
+            *b = 127;
+        }
+    }
+
+    let mut glyphs: Vec<GlyphRecord> = Vec::with_capacity(baked.len());
+
+    for (i, &(gid, ref rg, advance_em)) in baked.iter().enumerate() {
+        let (uv_min, uv_max) = if let Some(p) = placements[i] {
+            blit_rgba(
+                &mut atlas_rgba,
+                atlas_w,
+                p.x,
+                p.y,
+                &rg.pixels,
+                rg.w,
+                rg.h,
+            );
+            let ux0 = p.x;
+            let uy0 = p.y;
+            let ux1 = p.x + rg.w.saturating_sub(1);
+            let uy1 = p.y + rg.h.saturating_sub(1);
+            (
+                [ux0 as u16, uy0 as u16],
+                [ux1 as u16, uy1 as u16],
+            )
+        } else if need_sentinel {
+            ([0_u16; 2], [0_u16; 2])
         } else {
-            ([ox, oy], [ox + cell - 1, oy + cell - 1])
+            ([0_u16; 2], [0_u16; 2])
         };
 
         glyphs.push(GlyphRecord {
             glyph_id: gid.0 as u32,
-            uv_min: [uv_min[0] as u16, uv_min[1] as u16],
-            uv_max: [uv_max[0] as u16, uv_max[1] as u16],
-            plane_min_em: plane_min,
-            plane_max_em: plane_max,
+            uv_min,
+            uv_max,
+            plane_min_em: rg.plane_min_em,
+            plane_max_em: rg.plane_max_em,
             advance_em,
         });
     }
@@ -210,8 +260,8 @@ fn main() {
         font_hash,
         atlas_w,
         atlas_h,
-        glyph_px: GLYPH_PX,
-        distance_range_px: DISTANCE_RANGE_PX as f32,
+        em_to_px: ATLAS_PX_PER_EM,
+        em_extra_radius: EM_EXTRA_RADIUS as f32,
         units_per_em: face.units_per_em(),
         ascent_em: face.ascender() as f32 / upem,
         descent_em: face.descender() as f32 / upem,
@@ -228,8 +278,8 @@ fn main() {
 
     let manifest = Manifest {
         hash: hash_hex.clone(),
-        glyph_px: GLYPH_PX,
-        distance_range_px: DISTANCE_RANGE_PX,
+        em_to_px: ATLAS_PX_PER_EM,
+        em_extra_radius: EM_EXTRA_RADIUS,
         atlas_size: [atlas_w, atlas_h],
     };
     let manifest_json = serde_json::to_string_pretty(&manifest).expect("manifest json");
@@ -237,25 +287,30 @@ fn main() {
     fs::write(&manifest_cache, manifest_json).expect("write cache manifest");
 }
 
-fn raster_glyph_fdsm(
-    face: &Face<'_>,
-    gid: GlyphId,
-    cell: u32,
-    range: f64,
-    ec_cfg: &ErrorCorrectionConfig,
-    upem: f32,
-) -> (Vec<u8>, u32, u32, [f32; 2], [f32; 2]) {
-    let fallback_plane = glyph_plane_em(face, gid, upem);
-    const CELL_BPP: usize = 4;
-    let mut cell_rgba = vec![127u8; (cell * cell) as usize * CELL_BPP];
+fn sdf_px_span() -> f64 {
+    2.0 * EM_EXTRA_RADIUS * f64::from(ATLAS_PX_PER_EM)
+}
+
+fn raster_glyph_fdsm(face: &Face<'_>, gid: GlyphId, ec_cfg: &ErrorCorrectionConfig) -> RasterGlyph {
+    let upem = face.units_per_em() as f32;
+    let upem64 = face.units_per_em() as f64;
+    let (plane_lo, plane_hi) = glyph_plane_em(face, gid, upem);
+    let fallback = RasterGlyph {
+        pixels: Vec::new(),
+        w: 0,
+        h: 0,
+        plane_min_em: plane_lo,
+        plane_max_em: plane_hi,
+        has_ink: false,
+    };
+
     let Some(mut shape) = load_shape_from_face(face, gid) else {
-        return (cell_rgba, 0, 0, fallback_plane.0, fallback_plane.1);
+        return fallback;
     };
     if shape.contours.is_empty() {
-        return (cell_rgba, 0, 0, fallback_plane.0, fallback_plane.1);
+        return fallback;
     }
 
-    let upem64 = face.units_per_em() as f64;
     let bbox = face.glyph_bounding_box(gid).unwrap_or_else(|| {
         let adv = face.glyph_hor_advance(gid).unwrap_or(face.units_per_em() / 4);
         Rect {
@@ -266,87 +321,65 @@ fn raster_glyph_fdsm(
         }
     });
 
-    let bw = (bbox.x_max - bbox.x_min) as f64;
-    let bh = (bbox.y_max - bbox.y_min) as f64;
-    let inner = (cell as f64 - 2.0 * range).max(1.0);
-    let shrinkage = (upem64 / GLYPH_PX as f64)
-        .max(if bw > 0.0 { bw / inner } else { 0.0 })
-        .max(if bh > 0.0 { bh / inner } else { 0.0 })
-        .max(1.0e-6);
+    let pad_min_x = bbox.x_min as f64 - EM_EXTRA_RADIUS * upem64;
+    let pad_min_y = bbox.y_min as f64 - EM_EXTRA_RADIUS * upem64;
+    let pad_max_x = bbox.x_max as f64 + EM_EXTRA_RADIUS * upem64;
+    let pad_max_y = bbox.y_max as f64 + EM_EXTRA_RADIUS * upem64;
 
-    let transformation = convert::<_, Affine2<f64>>(Similarity2::new(
-        Vector2::new(
-            range - bbox.x_min as f64 / shrinkage,
-            range - bbox.y_min as f64 / shrinkage,
-        ),
+    let span_x = pad_max_x - pad_min_x;
+    let span_y = pad_max_y - pad_min_y;
+    let d = ATLAS_PX_PER_EM as f64;
+    let w = ((((span_x / upem64) * d).ceil()) as i64).clamp(1, i64::from(u32::MAX)) as u32;
+    let h = ((((span_y / upem64) * d).ceil()) as i64).clamp(1, i64::from(u32::MAX)) as u32;
+
+    let s = d / upem64;
+    let affine = convert::<_, Affine2<f64>>(Similarity2::new(
+        Vector2::new(-pad_min_x * s, -pad_min_y * s),
         0.0,
-        1.0 / shrinkage,
+        s,
     ));
-    shape.transform(&transformation);
+    shape.transform(&affine);
 
     let sin_alpha = (3.0_f64.to_radians()).sin();
     let colored = Shape::edge_coloring_simple(shape, sin_alpha, 0);
     let prepared = colored.prepare();
 
-    let w = ((bw / shrinkage + 2.0 * range).ceil() as u32).max(1).min(cell);
-    let h = ((bh / shrinkage + 2.0 * range).ceil() as u32).max(1).min(cell);
-
-    let inv = transformation.try_inverse().expect("similarity invertible");
-    let wp = (w.max(1) - 1) as f64;
-    let hp = (h.max(1) - 1) as f64;
-    // Bitmap rows are flipped before upload; these corners are pre-flip UV/sample corners.
-    let pre_flip_corners = [
-        Point2::new(0.0, hp),
-        Point2::new(wp, hp),
-        Point2::new(0.0, 0.0),
-        Point2::new(wp, 0.0),
+    let plane_min_em = [
+        (pad_min_x / upem64) as f32,
+        (pad_min_y / upem64) as f32,
     ];
-    let mut min_px = f64::INFINITY;
-    let mut max_px = f64::NEG_INFINITY;
-    let mut min_py = f64::INFINITY;
-    let mut max_py = f64::NEG_INFINITY;
-    for c in pre_flip_corners {
-        let p = inv.transform_point(&c);
-        min_px = min_px.min(p.x);
-        max_px = max_px.max(p.x);
-        min_py = min_py.min(p.y);
-        max_py = max_py.max(p.y);
-    }
-    let plane_min = [
-        min_px as f32 / upem,
-        min_py as f32 / upem,
-    ];
-    let plane_max = [
-        max_px as f32 / upem,
-        max_py as f32 / upem,
+    let plane_max_em = [
+        (pad_max_x / upem64) as f32,
+        (pad_max_y / upem64) as f32,
     ];
 
+    let pxrange = sdf_px_span();
     let mut mtsdf: ImageBuffer<Rgba<f32>, Vec<f32>> = ImageBuffer::new(w, h);
-    generate_mtsdf(&prepared, range, &mut mtsdf);
-    correct_error_mtsdf(
-        &mut mtsdf,
-        &colored,
-        &prepared,
-        range,
-        ec_cfg,
-    );
+    generate_mtsdf(&prepared, pxrange, &mut mtsdf);
+    correct_error_mtsdf(&mut mtsdf, &colored, &prepared, pxrange, ec_cfg);
     correct_sign_mtsdf(&mut mtsdf, &prepared, FillRule::Nonzero);
     flip_mtsdf_rows_top_for_font_up(&mut mtsdf);
 
-    let ox = (cell - w) / 2;
-    let oy = (cell - h) / 2;
+    let mut pixels = vec![0u8; (w * h * 4) as usize];
     for y in 0..h {
         for x in 0..w {
             let p = *mtsdf.get_pixel(x, y);
-            let di = (((oy + y) * cell + (ox + x)) as usize) * CELL_BPP;
-            cell_rgba[di] = (p[0].clamp(0.0, 1.0) * 255.0) as u8;
-            cell_rgba[di + 1] = (p[1].clamp(0.0, 1.0) * 255.0) as u8;
-            cell_rgba[di + 2] = (p[2].clamp(0.0, 1.0) * 255.0) as u8;
-            cell_rgba[di + 3] = (p[3].clamp(0.0, 1.0) * 255.0) as u8;
+            let i = ((y * w + x) * 4) as usize;
+            pixels[i] = (p[0].clamp(0.0, 1.0) * 255.0) as u8;
+            pixels[i + 1] = (p[1].clamp(0.0, 1.0) * 255.0) as u8;
+            pixels[i + 2] = (p[2].clamp(0.0, 1.0) * 255.0) as u8;
+            pixels[i + 3] = (p[3].clamp(0.0, 1.0) * 255.0) as u8;
         }
     }
 
-    (cell_rgba, w, h, plane_min, plane_max)
+    RasterGlyph {
+        pixels,
+        w,
+        h,
+        plane_min_em,
+        plane_max_em,
+        has_ink: true,
+    }
 }
 
 /// fdsm generates with Y pointing opposite to our atlas / ttf “y up” convention — flip rows so
@@ -435,29 +468,28 @@ fn glyph_plane_em(face: &Face<'_>, gid: GlyphId, upem: f32) -> ([f32; 2], [f32; 
     }
 }
 
-fn blit_cell(
+fn blit_rgba(
     atlas: &mut [u8],
     atlas_w: u32,
-    ox: u32,
-    oy: u32,
-    cell: u32,
-    cell_rgba: &[u8],
+    dst_x: u32,
+    dst_y: u32,
+    src: &[u8],
+    src_w: u32,
+    src_h: u32,
 ) {
-    let bpp = 4usize;
-    for y in 0..cell {
-        let dst_row = ((oy + y) * atlas_w + ox) as usize * bpp;
-        let src_row = (y * cell) as usize * bpp;
-        let len = cell as usize * bpp;
-        atlas[dst_row..dst_row + len].copy_from_slice(&cell_rgba[src_row..src_row + len]);
+    debug_assert!(
+        src.len() >= src_w as usize * src_h as usize * 4,
+        "src buffer too small"
+    );
+    for y in 0..src_h {
+        let dst_base = (((dst_y + y) * atlas_w + dst_x) * 4) as usize;
+        let src_base = ((y * src_w) * 4) as usize;
+        atlas[dst_base..dst_base + src_w as usize * 4]
+            .copy_from_slice(&src[src_base..src_base + src_w as usize * 4]);
     }
 }
 
 fn write_png_rgba(path: &Path, rgba: &[u8], w: u32, h: u32) -> Result<(), String> {
-    // IHDR + IDAT only: default `png::Encoder` does NOT emit sRGB/gAMA/iCCP unless we call
-    // `set_source_srgb` / `set_source_gamma`. Embedding those marks “display referred” sRGB data;
-    // MSDF texels are linear-ish masks and must be uploaded as `Rgba8Unorm` without decode — PNG is
-    // still lossless; breakage usually comes from 8-bit quantisation during bake or editors re-saving
-    // with colour-management chunks plus downstream loaders treating the texture as sRGB.
     let file = fs::File::create(path).map_err(|e| e.to_string())?;
     let mut enc = png::Encoder::new(file, w, h);
     enc.set_color(png::ColorType::Rgba);
