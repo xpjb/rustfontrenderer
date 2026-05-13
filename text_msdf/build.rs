@@ -31,8 +31,12 @@ const GENERATOR_VERSION: &str = "msdf-phase1-v12-space-invisible-ssaa";
 /// Persists the baked atlas next to the repo root (sibling of `text_msdf/`) for easy cache clears.
 const WORKSPACE_ATLAS_CACHE_DIR: &str = ".text_msdf_atlas";
 const GLYPH_PX: u32 = 64;
-/// Wider bake range so glow/halos can extend past ±2 atlas texels (see MSDF phase 2 review).
-const DISTANCE_RANGE_PX: f64 = 12.0;
+/// Atlas distance range in atlas pixels (this is `pxrange`; in em terms it's `range / GLYPH_PX`).
+/// Each atlas pixel beyond ±range/2 from the contour saturates to the byte extreme, so any
+/// material that does `clamp(sd + w + 0.5)` will paint a uniform rectangle wherever `w + 0.5`
+/// exceeds the encoded distance. To support outline width w / glow radius r cleanly at 1:1 render
+/// scale, need range ≥ 2(max(w, r) + 0.5). Currently 16 → safe up to ~7 px before partial leak.
+const DISTANCE_RANGE_PX: f64 = 16.0;
 const ATLAS_MAX_WIDTH: u32 = 2048;
 
 #[derive(Debug, Serialize, Deserialize)]
