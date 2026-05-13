@@ -1,0 +1,16 @@
+[package]
+name = "torture_msdf"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "torture_msdf"
+path = "src/main.rs"
+
+[dependencies]
+text_msdf = { path = "../text_msdf" }
+wgpu = { workspace = true }
+winit = { workspace = true }
+pollster = { workspace = true }
+glam = { workspace = true }
+bytemuck = { workspace = true }
