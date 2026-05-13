@@ -95,6 +95,7 @@ pub struct TextEngine {
     glyph_table: HashMap<u32, GlyphRecord>,
     fallback_glyph: GlyphRecord,
     distance_range_px: f32,
+    em_to_px: u32,
     atlas_w: f32,
     atlas_h: f32,
     shape_cache: HashMap<ShapeKey, CachedShape>,
@@ -198,12 +199,14 @@ impl TextEngine {
         let atlas_w = atlas.header().atlas_w as f32;
         let atlas_h = atlas.header().atlas_h as f32;
         let distance_range_px = atlas.distance_range_px();
+        let em_to_px = atlas.header().em_to_px;
         Ok(Self {
             font,
             atlas,
             glyph_table,
             fallback_glyph,
             distance_range_px,
+            em_to_px,
             atlas_w,
             atlas_h,
             shape_cache: HashMap::new(),
@@ -224,6 +227,11 @@ impl TextEngine {
 
     pub fn distance_range_px(&self) -> f32 {
         self.distance_range_px
+    }
+
+    /// Atlas density `D` (texels per em); pairs with [`Self::distance_range_px`] for screen MSDF scaling.
+    pub fn em_to_px(&self) -> u32 {
+        self.em_to_px
     }
 
     pub fn curve_atlas_size(&self) -> (u32, u32) {

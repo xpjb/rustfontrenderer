@@ -295,6 +295,8 @@ fn emit_wgsl_dispatch(mats: &[ParsedMaterial]) -> String {
     out.push_str(
         "fn dispatch_material(\n\
     tag: u32,\n\
+    screen_px_range: f32,\n\
+    sd_med: f32,\n\
     sd: f32,\n\
     sd_alpha: f32,\n\
     base_color: vec4<f32>,\n\
@@ -306,7 +308,7 @@ fn emit_wgsl_dispatch(mats: &[ParsedMaterial]) -> String {
     for (i, m) in mats.iter().enumerate() {
         let fn_name = expected_fn(&m.stem);
         out.push_str(&format!(
-            "        case {}u: {{\n            return {}(sd, sd_alpha, base_color, p);\n        }}\n",
+            "        case {}u: {{\n            return {}(screen_px_range, sd_med, sd, sd_alpha, base_color, p);\n        }}\n",
             i, fn_name
         ));
     }

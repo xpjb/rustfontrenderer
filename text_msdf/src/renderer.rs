@@ -10,8 +10,7 @@ use crate::vertex::TextVertex;
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Globals {
     matrix: [[f32; 4]; 4],
-    /// `x` = MSDF distance range in atlas texels (matches bake). `yz` = full atlas width/height in
-    /// texels (fragment converts `fwidth(uv)` to texels for AA).
+    /// `x` = atlas SDF span in texels, `y`/`z` = atlas size, `w` = `em_to_px`.
     px_meta: [f32; 4],
 }
 
@@ -103,10 +102,16 @@ pub struct TextRenderer {
     globals_bind_group: wgpu::BindGroup,
     pub atlas_layout: wgpu::BindGroupLayout,
     distance_range_px: f32,
+    em_to_px: f32,
 }
 
 impl TextRenderer {
-    pub fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration, distance_range_px: f32) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+        distance_range_px: f32,
+        em_to_px: u32,
+    ) -> Self {
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("text_msdf globals layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -147,7 +152,7 @@ impl TextRenderer {
             label: Some("text_msdf globals"),
             contents: bytemuck::bytes_of(&Globals {
                 matrix: Mat4::IDENTITY.to_cols_array_2d(),
-                px_meta: [distance_range_px, 1.0, 1.0, 0.0],
+                px_meta: [distance_range_px, 1.0, 1.0, em_to_px as f32],
             }),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -209,6 +214,11 @@ impl TextRenderer {
                 shader_location: 5,
                 format: wgpu::VertexFormat::Float32x4,
             },
+            wgpu::VertexAttribute {
+                offset: 68,
+                shader_location: 6,
+                format: wgpu::VertexFormat::Float32,
+            },
         ];
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -249,6 +259,7 @@ impl TextRenderer {
             globals_bind_group,
             atlas_layout,
             distance_range_px,
+            em_to_px: em_to_px as f32,
         }
     }
 
@@ -279,7 +290,7 @@ impl TextRenderer {
                 self.distance_range_px,
                 atlas.width.max(1) as f32,
                 atlas.height.max(1) as f32,
-                0.0,
+                self.em_to_px,
             ],
         };
         queue.write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));

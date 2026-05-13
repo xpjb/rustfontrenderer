@@ -36,12 +36,16 @@ const GENERATOR_VERSION: &str =
 /// Persists the baked atlas next to the repo root (sibling of `text_msdf/`) for easy cache clears.
 const WORKSPACE_ATLAS_CACHE_DIR: &str = ".text_msdf_atlas";
 /// Atlas sampling density `D` (constant texels span per **1 em**).
-const ATLAS_PX_PER_EM: u32 = 64;
+const ATLAS_PX_PER_EM: u32 = 96;
 /// Half of MSDF encoded span (`R_em/2`): padding per atlas side equals this × [`ATLAS_PX_PER_EM`]
 /// texels. Total encoded sdf span (`pxrange` for fdsm/shader) is `2 * EM_EXTRA_RADIUS * D`.
-const EM_EXTRA_RADIUS: f64 = 0.125;
+/// Larger values allow thicker outline/glow in screen px before the field saturates (~`em_extra_radius * size_px`).
+const EM_EXTRA_RADIUS: f64 = 0.2;
 
-const ATLAS_MAX_WIDTH: u32 = 2048;
+/// Minimum shelf row width (power of two). Keeps small glyphs from producing absurdly tall atlases.
+const ATLAS_SHELF_WIDTH_MIN: u32 = 2048;
+/// Maximum shelf row width; must stay a power of two for GPU texture rules.
+const ATLAS_SHELF_WIDTH_CAP: u32 = 8192;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Manifest {
@@ -89,12 +93,37 @@ fn main() {
     let font_bytes = fs::read(&font_path).expect("read font");
     let face = Face::parse(&font_bytes, 0).expect("parse font");
 
+    let mut atlas_gids: BTreeSet<u32> = BTreeSet::new();
+    for &ch in &chars_vec {
+        if let Some(gid) = face.glyph_index(ch) {
+            atlas_gids.insert(gid.0 as u32);
+        }
+    }
+    for gid in collect_shaped_glyph_ids(&font_bytes, &chars_vec) {
+        atlas_gids.insert(gid);
+    }
+    let resolved: Vec<GlyphId> = atlas_gids
+        .into_iter()
+        .map(|u| GlyphId(u as u16))
+        .collect();
+
+    let mut max_pack_glyph_w = 0u32;
+    let mut need_sentinel = false;
+    for &gid in &resolved {
+        match glyph_bitmap_wh_for_atlas(&face, gid) {
+            Some((w, _)) => max_pack_glyph_w = max_pack_glyph_w.max(w),
+            None => need_sentinel = true,
+        }
+    }
+    let x_margin = u32::from(need_sentinel);
+    let atlas_max_width = atlas_pot_shelf_width(max_pack_glyph_w, x_margin);
+
     let sdf_px_span = (2.0_f64 * EM_EXTRA_RADIUS * f64::from(ATLAS_PX_PER_EM)) as f32;
 
     let atlas_params = serde_json::json!({
         "em_to_px": ATLAS_PX_PER_EM,
         "em_extra_radius": EM_EXTRA_RADIUS,
-        "atlas_max_width": ATLAS_MAX_WIDTH,
+        "atlas_shelf_width": atlas_max_width,
         "sdf_px_range": sdf_px_span,
         "generator": GENERATOR_VERSION,
     });
@@ -138,21 +167,6 @@ fn main() {
     let upem = face.units_per_em() as f32;
     let font_hash = *blake3::hash(&font_bytes).as_bytes();
 
-    let mut atlas_gids: BTreeSet<u32> = BTreeSet::new();
-    for &ch in &chars_vec {
-        if let Some(gid) = face.glyph_index(ch) {
-            atlas_gids.insert(gid.0 as u32);
-        }
-    }
-    for gid in collect_shaped_glyph_ids(&font_bytes, &chars_vec) {
-        atlas_gids.insert(gid);
-    }
-
-    let resolved: Vec<GlyphId> = atlas_gids
-        .into_iter()
-        .map(|u| GlyphId(u as u16))
-        .collect();
-
     let missing: Vec<char> = chars_vec
         .iter()
         .copied()
@@ -168,7 +182,6 @@ fn main() {
     let ec_cfg = ErrorCorrectionConfig::default();
 
     let mut baked: Vec<(GlyphId, RasterGlyph, f32)> = Vec::with_capacity(resolved.len());
-    let mut need_sentinel = false;
 
     for &gid in &resolved {
         let advance_em = face
@@ -176,13 +189,9 @@ fn main() {
             .map(|a| a as f32 / upem)
             .unwrap_or(0.0);
         let rg = raster_glyph_fdsm(&face, gid, &ec_cfg);
-        if !rg.has_ink {
-            need_sentinel = true;
-        }
         baked.push((gid, rg, advance_em));
     }
 
-    let x_margin = u32::from(need_sentinel);
     let mut pack_order: Vec<(usize, u32, u32)> = Vec::new();
     for (i, (_, ref rg, _)) in baked.iter().enumerate() {
         if rg.has_ink && rg.w > 0 && rg.h > 0 {
@@ -191,17 +200,17 @@ fn main() {
     }
     pack_order.sort_by(|a, b| b.2.cmp(&a.2));
 
-    let mut packer = ShelfPacker::with_x_margin(ATLAS_MAX_WIDTH, x_margin);
+    let mut packer = ShelfPacker::with_x_margin(atlas_max_width, x_margin);
     let mut placements: Vec<Option<PackedRect>> = vec![None; baked.len()];
     for (idx, rw, rh) in pack_order {
         let packed = packer.pack(rw, rh).unwrap_or_else(|| {
             let gid = baked[idx].0;
             panic!(
-                "glyph_id {} MSDF bake {}×{} does not fit shelf width {}",
+                "glyph_id {} MSDF bake {}×{} does not fit shelf width {} (atlas packer bug — width should have been sized from glyph bounds)",
                 gid.0 as u32,
                 rw,
                 rh,
-                ATLAS_MAX_WIDTH
+                atlas_max_width
             )
         });
         placements[idx] = Some(packed);
@@ -291,6 +300,67 @@ fn sdf_px_span() -> f64 {
     2.0 * EM_EXTRA_RADIUS * f64::from(ATLAS_PX_PER_EM)
 }
 
+/// Smallest power-of-two shelf width that fits every glyph (`max_glyph_w + x_margin`), with clamping.
+fn atlas_pot_shelf_width(max_glyph_w: u32, x_margin: u32) -> u32 {
+    let need = max_glyph_w.saturating_add(x_margin).max(1);
+    let mut shelf = need.next_power_of_two();
+    shelf = shelf.max(ATLAS_SHELF_WIDTH_MIN);
+    if shelf > ATLAS_SHELF_WIDTH_CAP {
+        panic!(
+            "text_msdf: MSDF atlas needs shelf width >= {} texels (widest glyph {} + margin {}). \
+             Raise ATLAS_SHELF_WIDTH_CAP, lower ATLAS_PX_PER_EM, or shrink the charset.",
+            shelf,
+            max_glyph_w,
+            x_margin
+        );
+    }
+    shelf
+}
+
+/// Bitmap size for MSDF bake — matches [`raster_glyph_fdsm`] (outline glyphs only).
+fn bbox_padded_bounds(face: &Face<'_>, gid: GlyphId) -> (f64, f64, f64, f64) {
+    let upem64 = face.units_per_em() as f64;
+    let bbox = face.glyph_bounding_box(gid).unwrap_or_else(|| {
+        let adv = face.glyph_hor_advance(gid).unwrap_or(face.units_per_em() / 4);
+        Rect {
+            x_min: 0,
+            y_min: face.descender(),
+            x_max: adv as i16,
+            y_max: face.ascender(),
+        }
+    });
+    let pad_min_x = bbox.x_min as f64 - EM_EXTRA_RADIUS * upem64;
+    let pad_min_y = bbox.y_min as f64 - EM_EXTRA_RADIUS * upem64;
+    let pad_max_x = bbox.x_max as f64 + EM_EXTRA_RADIUS * upem64;
+    let pad_max_y = bbox.y_max as f64 + EM_EXTRA_RADIUS * upem64;
+    (pad_min_x, pad_min_y, pad_max_x, pad_max_y)
+}
+
+fn bitmap_wh_from_padded(
+    (pad_min_x, pad_min_y, pad_max_x, pad_max_y): (f64, f64, f64, f64),
+    upem64: f64,
+) -> (u32, u32) {
+    let span_x = pad_max_x - pad_min_x;
+    let span_y = pad_max_y - pad_min_y;
+    let d = ATLAS_PX_PER_EM as f64;
+    let w = ((((span_x / upem64) * d).ceil()) as i64).clamp(1, i64::from(u32::MAX)) as u32;
+    let h = ((((span_y / upem64) * d).ceil()) as i64).clamp(1, i64::from(u32::MAX)) as u32;
+    (w, h)
+}
+
+fn bitmap_wh_from_bbox(face: &Face<'_>, gid: GlyphId) -> (u32, u32) {
+    let upem64 = face.units_per_em() as f64;
+    bitmap_wh_from_padded(bbox_padded_bounds(face, gid), upem64)
+}
+
+fn glyph_bitmap_wh_for_atlas(face: &Face<'_>, gid: GlyphId) -> Option<(u32, u32)> {
+    let shape = load_shape_from_face(face, gid)?;
+    if shape.contours.is_empty() {
+        return None;
+    }
+    Some(bitmap_wh_from_bbox(face, gid))
+}
+
 fn raster_glyph_fdsm(face: &Face<'_>, gid: GlyphId, ec_cfg: &ErrorCorrectionConfig) -> RasterGlyph {
     let upem = face.units_per_em() as f32;
     let upem64 = face.units_per_em() as f64;
@@ -311,27 +381,11 @@ fn raster_glyph_fdsm(face: &Face<'_>, gid: GlyphId, ec_cfg: &ErrorCorrectionConf
         return fallback;
     }
 
-    let bbox = face.glyph_bounding_box(gid).unwrap_or_else(|| {
-        let adv = face.glyph_hor_advance(gid).unwrap_or(face.units_per_em() / 4);
-        Rect {
-            x_min: 0,
-            y_min: face.descender(),
-            x_max: adv as i16,
-            y_max: face.ascender(),
-        }
-    });
+    let pads = bbox_padded_bounds(face, gid);
+    let (w, h) = bitmap_wh_from_padded(pads, upem64);
+    let (pad_min_x, pad_min_y, pad_max_x, pad_max_y) = pads;
 
-    let pad_min_x = bbox.x_min as f64 - EM_EXTRA_RADIUS * upem64;
-    let pad_min_y = bbox.y_min as f64 - EM_EXTRA_RADIUS * upem64;
-    let pad_max_x = bbox.x_max as f64 + EM_EXTRA_RADIUS * upem64;
-    let pad_max_y = bbox.y_max as f64 + EM_EXTRA_RADIUS * upem64;
-
-    let span_x = pad_max_x - pad_min_x;
-    let span_y = pad_max_y - pad_min_y;
     let d = ATLAS_PX_PER_EM as f64;
-    let w = ((((span_x / upem64) * d).ceil()) as i64).clamp(1, i64::from(u32::MAX)) as u32;
-    let h = ((((span_y / upem64) * d).ceil()) as i64).clamp(1, i64::from(u32::MAX)) as u32;
-
     let s = d / upem64;
     let affine = convert::<_, Affine2<f64>>(Similarity2::new(
         Vector2::new(-pad_min_x * s, -pad_min_y * s),

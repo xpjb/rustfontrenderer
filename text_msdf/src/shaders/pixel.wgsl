@@ -1,3 +1,6 @@
+// `px_meta.x` = baked atlas `distanceRange` (friend hardcodes `const MSDF_RANGE: f32 = 4.0` from JSON).
+// `screen_px_range` = `px_meta.x * (glyph_scale_px / em_to_px)` ≡ `MSDF_RANGE * (scale / 64.0)` when 64 is atlas em density.
+
 struct Globals {
     matrix: mat4x4<f32>,
     px_meta: vec4<f32>,
@@ -11,20 +14,13 @@ fn median3(a: f32, b: f32, c: f32) -> f32 {
     return max(min(a, b), min(max(a, b), c));
 }
 
-fn unpack_sd_tri(s: vec4<f32>, uv: vec2<f32>) -> vec3<f32> {
-    let px_range = globals.px_meta.x;
-    let atlas_sz = globals.px_meta.yz;
+/// `.x` = raw median (`median3`) for outline — matches friend’s `let sd = median3(...)`.
+/// `.y` / `.z` = spread-mixed channel and alpha for fill/glow/shadow corner fix.
+fn unpack_sd_normalized(s: vec4<f32>) -> vec3<f32> {
     let md = median3(s.r, s.g, s.b);
     let spread = max(abs(s.r - s.g), max(abs(s.g - s.b), abs(s.r - s.b)));
     let dist_chan = mix(md, s.a, smoothstep(0.04, 0.12, spread));
-    let sd_texels = (dist_chan - 0.5) * px_range;
-    let sd_a_texels = (s.a - 0.5) * px_range;
-    let fw = max(fwidth(uv), vec2<f32>(1e-6));
-    let sigma_est = 0.5 * dot(fw, atlas_sz);
-    let sigma = max(sigma_est, 1e-4);
-    let sd = sd_texels / sigma;
-    let sd_a = sd_a_texels / sigma;
-    return vec3(sd, sd_a, sigma);
+    return vec3(md, dist_chan, s.a);
 }
 
 // {{include generated/ubershader_dispatch.wgsl}}
@@ -36,6 +32,7 @@ struct FsIn {
     @location(2) @interpolate(flat) mat_tag: u32,
     @location(3) @interpolate(flat) mat_p0: vec4<f32>,
     @location(4) @interpolate(flat) mat_p1: vec4<f32>,
+    @location(5) @interpolate(flat) glyph_scale_px: f32,
 }
 
 @fragment
@@ -44,8 +41,16 @@ fn main(in: FsIn) -> @location(0) vec4<f32> {
     let mp0 = in.mat_p0;
     let mp1 = in.mat_p1;
     let p = MaterialParams(mp0.x, mp0.y, mp0.z, mp0.w, mp1.x, mp1.y, mp1.z, mp1.w);
-    let tri = unpack_sd_tri(s, in.uv);
-    let sd = tri.x;
-    let sd_a = tri.y;
-    return dispatch_material(in.mat_tag, sd, sd_a, in.color, p);
+    let em_to_px = max(globals.px_meta.w, 1.0);
+    let screen_px_range = globals.px_meta.x * (in.glyph_scale_px / em_to_px);
+    let sd_tri = unpack_sd_normalized(s);
+    return dispatch_material(
+        in.mat_tag,
+        screen_px_range,
+        sd_tri.x,
+        sd_tri.y,
+        sd_tri.z,
+        in.color,
+        p,
+    );
 }

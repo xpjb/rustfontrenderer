@@ -14,6 +14,8 @@ pub struct TextVertex {
     pub mat_tag: u32,
     pub mat_p0: [f32; 4],
     pub mat_p1: [f32; 4],
+    /// Font size in screen pixels (`TextArgs.size_px`); drives MSDF coverage scaling like atlas `distanceRange * (scale/em_to_px)`.
+    pub size_px: f32,
 }
 
 pub(crate) fn glyph_quad_is_visible(record: &GlyphRecord) -> bool {
@@ -89,6 +91,7 @@ fn glyph_quad_pixels(
         mat_tag: tag,
         mat_p0,
         mat_p1,
+        size_px: size,
     };
 
     [

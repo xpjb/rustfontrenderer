@@ -140,7 +140,7 @@ async fn run() {
     };
     surface.configure(&device, &config);
 
-    let renderer = TextRenderer::new(&device, &config, engine.distance_range_px());
+    let renderer = TextRenderer::new(&device, &config, engine.distance_range_px(), engine.em_to_px());
     let mut atlas = engine.new_atlas(&device, &queue, &renderer.atlas_layout);
     let mut vbuf = DynamicVertexBuffer::new(&device, 4096);
 

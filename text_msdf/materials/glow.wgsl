@@ -6,6 +6,8 @@
 //! ]
 
 fn material_glow(
+    screen_px_range: f32,
+    _sd_med: f32,
     sd: f32,
     sd_alpha: f32,
     base_color: vec4<f32>,
@@ -18,14 +20,13 @@ fn material_glow(
     // Fill keeps the spread-mix for crisp corner color.
     let spread = abs(sd - sd_alpha);
     let fill = mix(
-        clamp(sd + 0.5, 0.0, 1.0),
-        clamp(sd_alpha + 0.5, 0.0, 1.0),
+        clamp(screen_px_range * (sd - 0.5) + 0.5, 0.0, 1.0),
+        clamp(screen_px_range * (sd_alpha - 0.5) + 0.5, 0.0, 1.0),
         smoothstep(0.04, 0.12, spread),
     );
 
-    // Glow tail uses alpha-only (true SDF). Soft halos don't benefit from median sharpness and
-    // do suffer from median discontinuities at corner color-transitions.
-    let outside_dist = max(-sd_alpha, 0.0);
+    // Outside distance in ~pixels: same scaling as coverage ramp.
+    let outside_dist = max(screen_px_range * (0.5 - sd_alpha), 0.0);
     let u = clamp(outside_dist / radius, 0.0, 1.0);
     let halo = strength * pow(1.0 - u, 2.5);
 
