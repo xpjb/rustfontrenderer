@@ -1,5 +1,6 @@
-//! Writes `atlas.{png,bin}` + `manifest.json` into Cargo [`OUT_DIR`] so `include_bytes!` always sees
-//! artifacts emitted by this script (deleting `text_msdf/generated/` cannot break the compile anymore).
+//! Writes `atlas.{png,bin}` + `manifest.json` into Cargo [`OUT_DIR`] for [`include_bytes!`], and
+//! mirrors them under the workspace-root `.text_msdf_atlas/` so you can invalidate the atlas by
+//! deleting that folder (`rm -rf .text_msdf_atlas`) without `cargo clean` across the workspace.
 //! MSDF raster uses pure-Rust [`fdsm`] + [`fdsm_ttf_parser`] (avoids `msdfgen-sys` on Windows).
 
 #[path = "src/atlas_format.rs"]
@@ -24,6 +25,8 @@ use serde::{Deserialize, Serialize};
 use ttf_parser::{Face, GlyphId, Rect, Tag};
 
 const GENERATOR_VERSION: &str = "msdf-phase1-v12-space-invisible-ssaa";
+/// Persists the baked atlas next to the repo root (sibling of `text_msdf/`) for easy cache clears.
+const WORKSPACE_ATLAS_CACHE_DIR: &str = ".text_msdf_atlas";
 const GLYPH_PX: u32 = 64;
 const DISTANCE_RANGE_PX: f64 = 4.0;
 const ATLAS_MAX_WIDTH: u32 = 2048;
@@ -42,6 +45,13 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let workspace_root = manifest_dir.join("..");
+    let cache_dir = workspace_root.join(WORKSPACE_ATLAS_CACHE_DIR);
+    fs::create_dir_all(&cache_dir).expect("workspace atlas cache dir");
+
+    // When this file is removed (e.g. whole `.text_msdf_atlas/` deleted), Cargo re-runs the script.
+    println!("cargo:rerun-if-changed=../.text_msdf_atlas/manifest.json");
+
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR from Cargo"));
     fs::create_dir_all(&out_dir).expect("OUT_DIR");
 
@@ -79,15 +89,22 @@ fn main() {
     let manifest_hash = blake3::hash(&manifest_hasher_input);
     let hash_hex = manifest_hash.to_hex().to_string();
 
-    let png_path = out_dir.join("atlas.png");
-    let bin_path = out_dir.join("atlas.bin");
-    let manifest_path = out_dir.join("manifest.json");
+    let png_out = out_dir.join("atlas.png");
+    let bin_out = out_dir.join("atlas.bin");
+    let manifest_out = out_dir.join("manifest.json");
 
-    if png_path.is_file() && bin_path.is_file() && manifest_path.is_file() {
-        if let Ok(existing) = fs::read_to_string(&manifest_path) {
+    let png_cache = cache_dir.join("atlas.png");
+    let bin_cache = cache_dir.join("atlas.bin");
+    let manifest_cache = cache_dir.join("manifest.json");
+
+    if png_cache.is_file() && bin_cache.is_file() && manifest_cache.is_file() {
+        if let Ok(existing) = fs::read_to_string(&manifest_cache) {
             if let Ok(parsed) = serde_json::from_str::<Manifest>(&existing) {
                 if parsed.hash == hash_hex {
                     println!("cargo:warning=text_msdf atlas cache hit ({})", hash_hex);
+                    fs::copy(&png_cache, &png_out).expect("cache → OUT_DIR atlas.png");
+                    fs::copy(&bin_cache, &bin_out).expect("cache → OUT_DIR atlas.bin");
+                    fs::copy(&manifest_cache, &manifest_out).expect("cache → OUT_DIR manifest");
                     return;
                 }
             }
@@ -192,9 +209,11 @@ fn main() {
 
     let atlas_file = AtlasFile { header, glyphs };
     let encoded = bincode::serialize(&atlas_file).expect("bincode atlas");
-    fs::write(&bin_path, encoded).expect("write atlas.bin");
+    fs::write(&bin_out, &encoded).expect("write atlas.bin");
+    fs::write(&bin_cache, &encoded).expect("write cache atlas.bin");
 
-    write_png_rgba(&png_path, &atlas_rgba, atlas_w, atlas_h).expect("write atlas.png");
+    write_png_rgba(&png_out, &atlas_rgba, atlas_w, atlas_h).expect("write atlas.png");
+    fs::copy(&png_out, &png_cache).expect("write cache atlas.png");
 
     let manifest = Manifest {
         hash: hash_hex.clone(),
@@ -202,11 +221,9 @@ fn main() {
         distance_range_px: DISTANCE_RANGE_PX,
         atlas_size: [atlas_w, atlas_h],
     };
-    fs::write(
-        &manifest_path,
-        serde_json::to_string_pretty(&manifest).expect("manifest json"),
-    )
-    .expect("write manifest");
+    let manifest_json = serde_json::to_string_pretty(&manifest).expect("manifest json");
+    fs::write(&manifest_out, &manifest_json).expect("write manifest");
+    fs::write(&manifest_cache, manifest_json).expect("write cache manifest");
 }
 
 fn raster_glyph_fdsm(
