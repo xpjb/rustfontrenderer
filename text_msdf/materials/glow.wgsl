@@ -15,6 +15,7 @@ fn material_glow(
     let gcol = vec4(p.p1, p.p2, p.p3, p.p4);
     let strength = p.p5;
 
+    // Fill keeps the spread-mix for crisp corner color.
     let spread = abs(sd - sd_alpha);
     let fill = mix(
         clamp(sd + 0.5, 0.0, 1.0),
@@ -22,10 +23,9 @@ fn material_glow(
         smoothstep(0.04, 0.12, spread),
     );
 
-    // Halo: smooth tail across `radius` pixels of distance outside the contour. DISTANCE_RANGE_PX
-    // in build.rs is sized to keep this within the encoded range, so the falloff is real distance,
-    // not a saturated plateau.
-    let outside_dist = max(-sd, 0.0);
+    // Glow tail uses alpha-only (true SDF). Soft halos don't benefit from median sharpness and
+    // do suffer from median discontinuities at corner color-transitions.
+    let outside_dist = max(-sd_alpha, 0.0);
     let u = clamp(outside_dist / radius, 0.0, 1.0);
     let halo = strength * pow(1.0 - u, 2.5);
 

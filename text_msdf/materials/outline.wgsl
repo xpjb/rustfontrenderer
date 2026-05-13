@@ -13,10 +13,16 @@ fn material_outline(
     let w = p.p0;
     let oc = vec4(p.p1, p.p2, p.p3, p.p4);
 
-    // Body uses median sd — alpha-channel valleys at corners caused dark cracks when mixed in.
+    // Hard outline: outline band follows the median MSDF distance (`sd`).
     // No plateau-kill needed: build.rs sets DISTANCE_RANGE_PX big enough that the natural
     // `clamp(... + 0.5)` fade lands inside the encoded range.
     let body = clamp(sd + w + 0.5, 0.0, 1.0);
+
+    // Softer outline option (alpha / true-SDF channel): use `sd_alpha` for `body` instead of `sd`.
+    // The median can produce “horns” at stroke ends — different cap segments get different edge
+    // colors and the median may not pick the visually nearest edge — but `sd_alpha` is monotonic
+    // and avoids that bleed. Trade-off: slightly rounder joins vs. sharper MSDF outline geometry.
+    // let body = clamp(sd_alpha + w + 0.5, 0.0, 1.0);
 
     // Fill blends median and alpha by spread so corner color stays crisp (same trick as fill.wgsl).
     let spread = abs(sd - sd_alpha);
