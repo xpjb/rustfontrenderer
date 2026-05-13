@@ -46,14 +46,16 @@ impl FrameLayout {
         let label_px = (26.0 * scale).clamp(18.0, 44.0);
         let swatch_px = (min_dim * 0.088).clamp(40.0, 120.0);
         let sample_gap = (min_dim * 0.032).clamp(18.0, 60.0);
-        let between_sections = (h * 0.012).max(10.0);
+        // Extra px between each material row (not text line spacing — unrelated to em units).
+        // `0.012 * height` ≈ 13px at 1080p (~1.2% of window height), not a fraction of em.
+        let between_rows_px = (h * 0.012).max(10.0);
         let footer_px = (18.0 * scale).clamp(12.0, 28.0);
 
         let body_start_y = margin_y + 6.0;
 
         // Section label → swatches: room for label descenders + outline/glow bleed above swatch row.
         let header_body_gap = label_px * 0.55 + swatch_px * 0.48 + 8.0;
-        let row_step = header_body_gap + swatch_px * LINE_SPACING + between_sections;
+        let row_step = header_body_gap + swatch_px * LINE_SPACING + between_rows_px;
         let footer_y = h - margin_y - footer_px * 0.35;
 
         Self {
