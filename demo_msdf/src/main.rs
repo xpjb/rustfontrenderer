@@ -15,22 +15,20 @@ use winit::{
     window::WindowBuilder,
 };
 
-const LINE_SPACING: f32 = 1.22;
+const LINE_SPACING: f32 = 1.08;
 const INITIAL_W: u32 = 1440;
 const INITIAL_H: u32 = 1080;
 
 struct FrameLayout {
     w: f32,
     margin_x: f32,
-    title_px: f32,
     label_px: f32,
     swatch_px: f32,
     sample_gap: f32,
     footer_px: f32,
-    title_y: f32,
     body_start_y: f32,
     footer_y: f32,
-    /// Delta from section header `y` to swatch row `y` (mixed font sizes need extra space).
+    /// Delta from section header `y` to swatch row `y`.
     header_body_gap: f32,
     row_step: f32,
 }
@@ -43,35 +41,28 @@ impl FrameLayout {
         let scale = (min_dim / 760.0).clamp(0.85, 2.8);
 
         let margin_x = w * 0.028;
-        let margin_y = h * 0.026;
+        let margin_y = h * 0.018;
 
-        // ~2× previous demo sizes; still clamp so tiny windows stay usable.
-        let title_px = (42.0 * scale).clamp(28.0, 88.0);
-        let label_px = (30.0 * scale).clamp(22.0, 56.0);
-        let swatch_px = (min_dim * 0.102).clamp(48.0, 150.0);
-        let sample_gap = (min_dim * 0.038).clamp(22.0, 78.0);
-        let between_sections = h * 0.032;
-        let footer_px = (22.0 * scale).clamp(14.0, 34.0);
+        let label_px = (26.0 * scale).clamp(18.0, 44.0);
+        let swatch_px = (min_dim * 0.088).clamp(40.0, 120.0);
+        let sample_gap = (min_dim * 0.032).clamp(18.0, 60.0);
+        let between_sections = (h * 0.012).max(10.0);
+        let footer_px = (18.0 * scale).clamp(12.0, 28.0);
 
-        let title_y = margin_y + title_px * 0.88;
-        let body_start_y = title_y + title_px * 1.15 + h * 0.028;
+        let body_start_y = margin_y + 6.0;
 
-        // Header uses `label_px`, swatches use `swatch_px`; one "line height" in label space
-        // is not enough clearance for tall capitals / effects on the big line.
-        let header_body_gap =
-            label_px * 1.35 + swatch_px * 0.92 + min_dim * 0.018;
+        // Section label → swatches: room for label descenders + outline/glow bleed above swatch row.
+        let header_body_gap = label_px * 0.55 + swatch_px * 0.48 + 8.0;
         let row_step = header_body_gap + swatch_px * LINE_SPACING + between_sections;
-        let footer_y = h - margin_y - footer_px * 0.4;
+        let footer_y = h - margin_y - footer_px * 0.35;
 
         Self {
             w,
             margin_x,
-            title_px,
             label_px,
             swatch_px,
             sample_gap,
             footer_px,
-            title_y,
             body_start_y,
             footer_y,
             header_body_gap,
@@ -226,16 +217,6 @@ async fn run() {
 
                         let lay = FrameLayout::new(sz.width, sz.height);
 
-                        let mut hdr = measure_args(lay.title_px);
-                        hdr.color = [0.82, 0.85, 0.92, 1.0];
-                        hdr.max_width_px = Some(lay.w - lay.margin_x * 2.0);
-                        engine.text(
-                            lay.margin_x,
-                            lay.title_y,
-                            "MSDF materials (Hack) — width / radius / blur are screen px, mapped with sigma/px_range. Resize to scale.",
-                            &hdr,
-                        );
-
                         let mut y = lay.body_start_y;
 
                         row_title(&mut engine, &lay, y, "[1] FILL — baseline");
@@ -344,7 +325,7 @@ async fn run() {
                             &mut engine,
                             &lay,
                             y,
-                            "[4] SHADOW — offset_uv (atlas), blur_px",
+                            "[4] SHADOW — offset_px (screen), blur_px",
                         );
                         y += lay.header_body_gap;
                         place_swatches(
@@ -353,25 +334,25 @@ async fn run() {
                             y,
                             &[
                                 (
-                                    "o=.004 b=2",
+                                    "o=6,7 b=2",
                                     Material::Shadow {
-                                        offset_uv: [0.004, 0.005],
+                                        offset_px: [6.0, 7.0],
                                         blur_px: 2.0,
                                         color: shadow_c,
                                     },
                                 ),
                                 (
-                                    "o=.008 b=4",
+                                    "o=12,14 b=4",
                                     Material::Shadow {
-                                        offset_uv: [0.008, 0.01],
+                                        offset_px: [12.0, 14.0],
                                         blur_px: 4.0,
                                         color: shadow_c,
                                     },
                                 ),
                                 (
-                                    "o=.014 b=8",
+                                    "o=22,26 b=8",
                                     Material::Shadow {
-                                        offset_uv: [0.014, 0.017],
+                                        offset_px: [22.0, 26.0],
                                         blur_px: 8.0,
                                         color: shadow_c,
                                     },

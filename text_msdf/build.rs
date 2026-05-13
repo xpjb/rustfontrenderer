@@ -31,7 +31,8 @@ const GENERATOR_VERSION: &str = "msdf-phase1-v12-space-invisible-ssaa";
 /// Persists the baked atlas next to the repo root (sibling of `text_msdf/`) for easy cache clears.
 const WORKSPACE_ATLAS_CACHE_DIR: &str = ".text_msdf_atlas";
 const GLYPH_PX: u32 = 64;
-const DISTANCE_RANGE_PX: f64 = 4.0;
+/// Wider bake range so glow/halos can extend past ±2 atlas texels (see MSDF phase 2 review).
+const DISTANCE_RANGE_PX: f64 = 12.0;
 const ATLAS_MAX_WIDTH: u32 = 2048;
 
 #[derive(Debug, Serialize, Deserialize)]

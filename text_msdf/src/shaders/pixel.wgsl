@@ -21,7 +21,7 @@ fn unpack_sd_tri(s: vec4<f32>, uv: vec2<f32>) -> vec3<f32> {
     let sd_a_texels = (s.a - 0.5) * px_range;
     let fw = max(fwidth(uv), vec2<f32>(1e-6));
     let sigma_est = 0.5 * dot(fw, atlas_sz);
-    let sigma = max(sigma_est, px_range * 0.35);
+    let sigma = max(sigma_est, 1e-4);
     let sd = sd_texels / sigma;
     let sd_a = sd_a_texels / sigma;
     return vec3(sd, sd_a, sigma);
@@ -41,19 +41,11 @@ struct FsIn {
 @fragment
 fn main(in: FsIn) -> @location(0) vec4<f32> {
     let s = textureSample(atlas_tex, atlas_samp, in.uv);
-    var s_sh = s;
     let mp0 = in.mat_p0;
     let mp1 = in.mat_p1;
     let p = MaterialParams(mp0.x, mp0.y, mp0.z, mp0.w, mp1.x, mp1.y, mp1.z, mp1.w);
-    if (in.mat_tag == MATERIAL_TAG_SHADOW) {
-        s_sh = textureSample(atlas_tex, atlas_samp, in.uv + vec2(p.p0, p.p1));
-    }
     let tri = unpack_sd_tri(s, in.uv);
     let sd = tri.x;
     let sd_a = tri.y;
-    let px_range = globals.px_meta.x;
-    // Map author-facing pixel widths (outline/glow/blur) into the same units as `sd`.
-    let px_to_sd = tri.z / max(px_range, 1e-3);
-    let aa = 1.0;
-    return dispatch_material(in.mat_tag, sd, sd_a, aa, in.uv, in.color, s, s_sh, p, px_to_sd);
+    return dispatch_material(in.mat_tag, sd, sd_a, in.color, p);
 }

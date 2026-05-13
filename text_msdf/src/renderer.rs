@@ -200,12 +200,12 @@ impl TextRenderer {
                 format: wgpu::VertexFormat::Uint32,
             },
             wgpu::VertexAttribute {
-                offset: 48,
+                offset: 36,
                 shader_location: 4,
                 format: wgpu::VertexFormat::Float32x4,
             },
             wgpu::VertexAttribute {
-                offset: 64,
+                offset: 52,
                 shader_location: 5,
                 format: wgpu::VertexFormat::Float32x4,
             },

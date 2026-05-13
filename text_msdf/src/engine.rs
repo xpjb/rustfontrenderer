@@ -312,17 +312,43 @@ impl TextEngine {
             if !glyph_quad_is_visible(&g.atlas) {
                 continue;
             }
-            push_glyph_quad_pixels(
-                &mut self.vertex_scratch,
-                &g.atlas,
-                aw,
-                ah,
-                g.x,
-                g.y,
-                g.size_px,
-                g.color,
-                g.material,
-            );
+            match g.material {
+                Material::Shadow { offset_px, .. } => {
+                    push_glyph_quad_pixels(
+                        &mut self.vertex_scratch,
+                        &g.atlas,
+                        aw,
+                        ah,
+                        g.x + offset_px[0],
+                        g.y + offset_px[1],
+                        g.size_px,
+                        g.color,
+                        g.material,
+                    );
+                    push_glyph_quad_pixels(
+                        &mut self.vertex_scratch,
+                        &g.atlas,
+                        aw,
+                        ah,
+                        g.x,
+                        g.y,
+                        g.size_px,
+                        g.color,
+                        Material::Fill,
+                    );
+                }
+                _ => push_glyph_quad_pixels(
+                    &mut self.vertex_scratch,
+                    &g.atlas,
+                    aw,
+                    ah,
+                    g.x,
+                    g.y,
+                    g.size_px,
+                    g.color,
+                    g.material,
+                ),
+            }
         }
 
         let fc = self.frame_counter;

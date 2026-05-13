@@ -7,17 +7,15 @@
 fn material_outline(
     sd: f32,
     sd_alpha: f32,
-    aa: f32,
-    uv: vec2<f32>,
     base_color: vec4<f32>,
-    s: vec4<f32>,
-    s_sh: vec4<f32>,
     p: MaterialParams,
-    px_to_sd: f32,
 ) -> vec4<f32> {
-    let w = p.p0 * px_to_sd;
+    let w = p.p0;
     let oc = vec4(p.p1, p.p2, p.p3, p.p4);
-    let fill = clamp(sd / aa + 0.5, 0.0, 1.0);
-    let body = clamp((sd + w) / aa + 0.5, 0.0, 1.0);
-    return vec4(mix(oc.rgb, base_color.rgb, fill), body * base_color.a);
+    let spread = abs(sd - sd_alpha);
+    let fill = clamp(sd + 0.5, 0.0, 1.0);
+    let fill_a = clamp(sd_alpha + 0.5, 0.0, 1.0);
+    let ink = mix(fill, fill_a, smoothstep(0.04, 0.12, spread));
+    let body = clamp(sd + w + 0.5, 0.0, 1.0);
+    return vec4(mix(oc.rgb, base_color.rgb, ink), body * base_color.a);
 }

@@ -29,7 +29,6 @@ struct ParsedMaterial {
     header: Header,
     /// WGSL body (`fn material_…` onward).
     body: String,
-    expected_fn: String,
 }
 
 fn param_slot_count(ty: &str) -> usize {
@@ -100,13 +99,11 @@ fn load_material(path: &Path) -> ParsedMaterial {
     if !body.contains(&format!("fn {}", exp)) {
         panic!("{:?}: expected `fn {}` in body", path, exp);
     }
-    // Avoid `switch` on some naga versions: use if/else chain for dispatch.
     ParsedMaterial {
         variant: to_variant_name(&stem),
         stem,
         header,
         body: body.trim().to_string(),
-        expected_fn: exp,
     }
 }
 
@@ -281,12 +278,7 @@ fn emit_tag_impl(mats: &[ParsedMaterial]) -> String {
     s
 }
 
-fn emit_wgsl_dispatch(mats: &[ParsedMaterial]) -> (String, u32) {
-    let shadow_tag = mats
-        .iter()
-        .position(|m| m.stem == "shadow")
-        .expect("shadow material") as u32;
-
+fn emit_wgsl_dispatch(mats: &[ParsedMaterial]) -> String {
     let mut out = String::new();
     out.push_str(
         "struct MaterialParams {\n\
@@ -294,10 +286,6 @@ fn emit_wgsl_dispatch(mats: &[ParsedMaterial]) -> (String, u32) {
     p4: f32, p5: f32, p6: f32, p7: f32,\n\
 }\n\n",
     );
-    out.push_str(&format!(
-        "const MATERIAL_TAG_SHADOW: u32 = {}u;\n\n",
-        shadow_tag
-    ));
 
     for m in mats {
         out.push_str(&m.body);
@@ -309,33 +297,29 @@ fn emit_wgsl_dispatch(mats: &[ParsedMaterial]) -> (String, u32) {
     tag: u32,\n\
     sd: f32,\n\
     sd_alpha: f32,\n\
-    aa: f32,\n\
-    uv: vec2<f32>,\n\
     base_color: vec4<f32>,\n\
-    s: vec4<f32>,\n\
-    s_sh: vec4<f32>,\n\
     p: MaterialParams,\n\
-    px_to_sd: f32,\n\
-) -> vec4<f32> {\n",
+) -> vec4<f32> {\n\
+    switch tag {\n",
     );
 
     for (i, m) in mats.iter().enumerate() {
-        if i == 0 {
-            out.push_str(&format!(
-                "    if (tag == {}u) {{\n        return {}(sd, sd_alpha, aa, uv, base_color, s, s_sh, p, px_to_sd);\n    }}\n",
-                i, m.expected_fn
-            ));
-        } else {
-            out.push_str(&format!(
-                "    else if (tag == {}u) {{\n        return {}(sd, sd_alpha, aa, uv, base_color, s, s_sh, p, px_to_sd);\n    }}\n",
-                i, m.expected_fn
-            ));
-        }
+        let fn_name = expected_fn(&m.stem);
+        out.push_str(&format!(
+            "        case {}u: {{\n            return {}(sd, sd_alpha, base_color, p);\n        }}\n",
+            i, fn_name
+        ));
     }
 
-    out.push_str("    return vec4<f32>(1.0, 0.0, 1.0, 1.0);\n}\n");
+    out.push_str(
+        "        default: {\n\
+            return vec4<f32>(1.0, 0.0, 1.0, 1.0);\n\
+        }\n\
+    }\n\
+}\n",
+    );
 
-    (out, shadow_tag)
+    out
 }
 
 fn substitute_pixel_template(template: &str, dispatch: &str) -> String {
@@ -356,10 +340,12 @@ fn validate_wgsl(full_pixel: &str) {
 }
 
 pub fn run(manifest_dir: &Path, out_dir: &Path) {
-    println!("cargo:rerun-if-changed=materials");
-
     let materials_dir = manifest_dir.join("materials");
     let paths = collect_material_wgsl(&materials_dir);
+    for p in &paths {
+        let rel = p.strip_prefix(manifest_dir).unwrap_or(p);
+        println!("cargo:rerun-if-changed={}", rel.display());
+    }
     let mats: Vec<ParsedMaterial> = paths.iter().map(|p| load_material(p)).collect();
     for m in &mats {
         validate_header(m);
@@ -372,7 +358,7 @@ pub fn run(manifest_dir: &Path, out_dir: &Path) {
     rust.push_str(&emit_tag_impl(&mats));
     fs::write(&rust_out, &rust).expect("write materials_codegen.rs");
 
-    let (dispatch, _shadow_tag) = emit_wgsl_dispatch(&mats);
+    let dispatch = emit_wgsl_dispatch(&mats);
     let dispatch_path = out_dir.join("ubershader_dispatch.wgsl");
     fs::write(&dispatch_path, &dispatch).expect("write ubershader_dispatch.wgsl");
 

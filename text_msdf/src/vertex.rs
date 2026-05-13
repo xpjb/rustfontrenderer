@@ -12,8 +12,6 @@ pub struct TextVertex {
     pub uv: [f32; 2],
     pub color: [f32; 4],
     pub mat_tag: u32,
-    /// Pad to 16-byte alignment before the two `vec4` param slots.
-    pub _pad_mat: [u32; 3],
     pub mat_p0: [f32; 4],
     pub mat_p1: [f32; 4],
 }
@@ -89,7 +87,6 @@ fn glyph_quad_pixels(
         uv: uv_at(ex, ey),
         color,
         mat_tag: tag,
-        _pad_mat: [0, 0, 0],
         mat_p0,
         mat_p1,
     };
